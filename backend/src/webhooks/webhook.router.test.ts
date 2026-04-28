@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import express, { Express } from "express";
+
+vi.mock("./webhook.service", () => ({
+  notifySeller: vi.fn(() => Promise.resolve()),
+  dispatchWebhook: vi.fn(() => Promise.resolve()),
+}));
+
 import { webhooksRouter } from "./webhook.router";
 import { readStore, writeStore, Store } from "../common/storage";
 import fs from "fs";
