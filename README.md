@@ -15,10 +15,11 @@ A Web3 data marketplace where **sellers** list valuable on-chain intelligence an
 5. [Tech Stack](#tech-stack)
 6. [Project Structure](#project-structure)
 7. [Getting Started](#getting-started)
-8. [Pages & Features](#pages--features)
-9. [API Reference](#api-reference)
-10. [Payment Flow Deep Dive](#payment-flow-deep-dive)
-11. [Environment Variables](#environment-variables)
+8. [Run with Docker](#run-with-docker)
+9. [Pages & Features](#pages--features)
+10. [API Reference](#api-reference)
+11. [Payment Flow Deep Dive](#payment-flow-deep-dive)
+12. [Environment Variables](#environment-variables)
 
 ---
 
@@ -45,7 +46,7 @@ The Hazina escrow contract is written in **Rust**, compiled to **WebAssembly**, 
 | **Network** | Stellar Testnet |
 | **Explorer** | [View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/CCPG2CSL6WDUA2IFUDHFN5SCJQUTFCLFKMTARALQ5RWGB2RGG345HEEH) |
 | **Admin** | `GA72WMKUB52OD2X437YOTJZXP3J7MV5G2RYC2JHFJJHWF6MBGQHVUMLO` |
-| **Platform Fee** | 5% (500 basis points) |
+| **Platform Fee** | Default 5% (500 basis points), configurable per dataset |
 | **Source** | `contracts/hazina-escrow/src/lib.rs` |
 
 ### What the Contract Does
@@ -70,12 +71,23 @@ Buyer           Contract              Seller
 
 | Function | Who Calls It | What It Does |
 |---|---|---|
-| `initialize(admin, fee_bps)` | Deployer (once) | Sets the admin address and platform fee (500 = 5%) |
+| `initialize(admin, fee_bps)` | Deployer (once) | Sets the admin address and default platform fee (500 = 5%) |
+| `pause(admin)` | Hazina backend (admin) | Emergency circuit breaker: disables `lock`/`lock_multi` and `release`/`release_multi` |
+| `unpause(admin)` | Hazina backend (admin) | Resumes normal operations after a pause |
+| `is_paused()` | Anyone | Returns whether the contract is currently paused |
+| `set_default_fee(admin, fee_bps)` | Hazina backend (admin) | Updates the fallback fee used when no dataset override exists |
+| `set_dataset_fee(admin, dataset_id, fee_bps)` | Hazina backend (admin) | Sets a custom platform fee for a specific dataset |
+| `clear_dataset_fee(admin, dataset_id)` | Hazina backend (admin) | Removes a dataset-specific fee override |
+| `set_whitelist_enforced(admin, enforced)` | Hazina backend (admin) | Toggles whitelist mode for participant addresses |
+| `set_address_whitelisted(admin, address, whitelisted)` | Hazina backend (admin) | Marks an address as whitelist-approved |
+| `set_address_blacklisted(admin, address, blacklisted)` | Hazina backend (admin) | Blocks or unblocks a malicious address |
 | `lock(buyer, seller, token, amount, dataset_id)` | Buyer | Transfers USDC from buyer into the contract. Returns an `escrow_id`. |
 | `release(admin, escrow_id)` | Hazina backend (admin) | Sends 95% to seller, 5% to admin. Fires a `released` event. |
 | `refund(admin, escrow_id)` | Hazina backend (admin) | Returns full amount to buyer if something goes wrong. |
 | `get_escrow(escrow_id)` | Anyone | Reads an escrow record (buyer, seller, amount, status). |
-| `get_fee()` | Anyone | Returns current platform fee in basis points. |
+| `get_fee()` | Anyone | Returns the default platform fee in basis points. |
+| `get_dataset_fee_config(dataset_id)` | Anyone | Returns the effective fee config for a dataset override. |
+| `get_address_policy(address)` | Anyone | Returns whitelist and blacklist status for an address. |
 
 ### Why Soroban?
 
@@ -112,6 +124,16 @@ stellar contract invoke \
   --admin <YOUR_WALLET> \
   --platform_fee_bps 500
 ```
+
+### Verification Scripts
+
+```bash
+npm run contracts:check
+npm run contracts:formal
+```
+
+- `contracts:check` runs `cargo fmt --check`, `cargo clippy`, the full Rust test suite, and a release wasm build.
+- `contracts:formal` runs the invariant-oriented contract tests prefixed with `formal_`.
 
 ---
 
@@ -373,6 +395,43 @@ cd frontend && npm run dev
 Every dataset has **demo mode** — in the buy modal, tick **"Demo mode"** to get a full Claude AI analysis without sending a real Stellar payment.
 
 The AI Agent also has demo mode — go to `/agent`, type any query, click **Run Agent**.
+
+---
+
+## Run with Docker
+
+### Prerequisites
+
+- Docker Desktop (or Docker Engine + Compose plugin)
+- A configured `backend/.env` file
+
+### Development (hot reload)
+
+```bash
+docker compose up --build
+```
+
+- Frontend (Vite HMR): http://localhost:5173
+- Backend API: http://localhost:3001
+- Backend uses `backend/.env` via `env_file`
+- `data/datasets.json` is bind-mounted to `/app/data/datasets.json` so data persists across container restarts
+
+### Production-style local run
+
+```bash
+docker compose -f docker-compose.prod.yml up --build
+```
+
+- Frontend is built and served by nginx on http://localhost
+- nginx proxies `/api/*` traffic to the backend container
+- Backend is compiled with `tsc` and run via `node dist/main.js`
+
+### Stop containers
+
+```bash
+docker compose down
+docker compose -f docker-compose.prod.yml down
+```
 
 ---
 

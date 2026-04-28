@@ -1,7 +1,24 @@
 node_modules/
+**/node_modules/
 dist/
 .env
 *.log
 .DS_Store
 frontend/dist/
 backend/dist/
+backend/backups/
+backups/
+backend/coverage/
+frontend/coverage/
+
+# Avoid committing property-test snapshot explosions (enable with `--features fuzz-tests` if needed).
+contracts/hazina-escrow/test_snapshots/fuzz_tests/
+
+# Added by cargo
+
+/target
+fix.md
+issue.md
+pr.md
+
+.claude

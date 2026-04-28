@@ -8,6 +8,7 @@ export interface ResearchInput {
   whaleData: Record<string, unknown>;
   riskData: Record<string, unknown>;
   sentimentData: Record<string, unknown>;
+  datasetCosts: Record<string, number>;
 }
 
 export interface ResearchReport {
@@ -35,19 +36,19 @@ BUDGET: $${input.budget} USDC
 RISK TOLERANCE: ${input.riskTolerance}
 
 ---
-DATASET 1 — YIELD DATA (purchased for 0.02 USDC):
+DATASET 1 — YIELD DATA (purchased for ${input.datasetCosts['yieldData'] ?? 'unknown'} USDC):
 ${JSON.stringify(input.yieldData, null, 2)}
 
 ---
-DATASET 2 — WHALE WALLET MOVEMENTS (purchased for 0.05 USDC):
+DATASET 2 — WHALE WALLET MOVEMENTS (purchased for ${input.datasetCosts['whaleData'] ?? 'unknown'} USDC):
 ${JSON.stringify(input.whaleData, null, 2)}
 
 ---
-DATASET 3 — RISK SCORES (purchased for 0.03 USDC):
+DATASET 3 — RISK SCORES (purchased for ${input.datasetCosts['riskData'] ?? 'unknown'} USDC):
 ${JSON.stringify(input.riskData, null, 2)}
 
 ---
-DATASET 4 — MARKET SENTIMENT (purchased for 0.04 USDC):
+DATASET 4 — MARKET SENTIMENT (purchased for ${input.datasetCosts['sentimentData'] ?? 'unknown'} USDC):
 ${JSON.stringify(input.sentimentData, null, 2)}
 
 ---
@@ -112,9 +113,12 @@ export function parseRiskTolerance(query: string): 'low' | 'medium' | 'high' {
  * e.g. "$500", "500 USDC", "500 budget" → 500
  */
 export function parseBudget(query: string): number {
-  const match = query.match(/\$?(\d[\d,]*)\s*(usdc|usd|budget)?/i);
+  const match = query.match(/\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(usdc|usd|budget)?/i);
   if (match) {
-    return parseInt(match[1].replace(',', ''), 10);
+    const parsed = Number(match[1].replace(/,/g, ''));
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.round(parsed);
+    }
   }
   return 500; // default
 }

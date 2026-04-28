@@ -3,16 +3,17 @@ import { getAllDatasets, getDataset, updateDataset, addTransaction, txHashUsed }
 import { verifyStellarPayment } from '../payments/stellar.service';
 import { sendUsdcPayment, getAgentPublicKey } from './agent.wallet';
 import { synthesizeResearch, parseRiskTolerance, parseBudget, ResearchReport } from '../ai/research.service';
+import { notifySeller } from '../webhooks/webhook.service';
 
 // Fee the agent charges the human (1 USDC flat)
-const AGENT_FEE_USDC = 1;
+export const AGENT_FEE_USDC = 1;
 
 // Dataset types the agent purchases and their roles in the report
-const SELLER_TYPES = [
-  { type: 'yield-data',    role: 'yieldData'    },
-  { type: 'whale-wallets', role: 'whaleData'    },
-  { type: 'risk-scores',   role: 'riskData'     },
-  { type: 'sentiment',     role: 'sentimentData' },
+export const SELLER_TYPES = [
+  { type: 'yield-data',    role: 'yieldData',     description: 'APY & protocol data' },
+  { type: 'whale-wallets', role: 'whaleData',     description: 'Whale wallet movements' },
+  { type: 'risk-scores',   role: 'riskData',      description: 'Protocol risk scores' },
+  { type: 'sentiment',     role: 'sentimentData', description: 'Social market sentiment' },
 ] as const;
 
 export interface AgentJob {
@@ -107,10 +108,14 @@ async function _executeResearch(
     if (demo) {
       // Demo: simulate payment, read data directly
       txHash = `demo-${seller.type}-${Date.now()}`;
-      console.log(`[Agent][Demo] Simulating payment of ${dataset.pricePerQuery} USDC → ${dataset.sellerWallet} for ${dataset.name}`);
+      console.log(
+        `[Agent][Demo] Simulating payment of ${dataset.pricePerQuery} USDC → ${dataset.sellerWallet} for ${dataset.name}`,
+      );
     } else {
       // Real: send USDC from agent wallet → seller wallet
-      console.log(`[Agent] Paying ${dataset.pricePerQuery} USDC → ${dataset.sellerWallet} for ${dataset.name}`);
+      console.log(
+        `[Agent] Paying ${dataset.pricePerQuery} USDC → ${dataset.sellerWallet} for ${dataset.name}`,
+      );
       const payment = await sendUsdcPayment({
         destinationAddress: dataset.sellerWallet,
         amount: dataset.pricePerQuery.toFixed(7),
@@ -148,12 +153,28 @@ async function _executeResearch(
       timestamp: new Date().toISOString(),
     });
 
+    // Notify seller via webhook
+    notifySeller(dataset.sellerWallet, 'dataset.queried', {
+      datasetId: dataset.id,
+      datasetName: dataset.name,
+      type: dataset.type,
+      txHash,
+      amount: dataset.pricePerQuery,
+      agentJobId: jobId,
+      demo,
+    }).catch(() => {});
+
     // Read the actual data
     const fresh = getDataset(dataset.id);
     collectedData[seller.role] = fresh?.data ?? {};
   }
 
   const agentProfit = parseFloat((AGENT_FEE_USDC - totalSpent).toFixed(4));
+
+  const datasetCosts: Record<string, number> = {};
+  purchases.forEach(p => {
+    datasetCosts[p.role] = p.amountPaid;
+  });
 
   // 3. Synthesise with Claude
   const report = await synthesizeResearch({
@@ -164,6 +185,7 @@ async function _executeResearch(
     whaleData:     collectedData['whaleData']      ?? {},
     riskData:      collectedData['riskData']       ?? {},
     sentimentData: collectedData['sentimentData']  ?? {},
+    datasetCosts,
   });
 
   // 4. Log the agent job as a transaction for audit trail

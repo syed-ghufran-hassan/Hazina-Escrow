@@ -1,26 +1,64 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState } from "react";
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, BarChart, Bar, Cell
-} from 'recharts';
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  Cell,
+} from "recharts";
 import {
-  TrendingUp, Database, Zap, Clock, ArrowUpRight,
-  DollarSign, Activity, ChevronRight
-} from 'lucide-react';
-import { api, DatasetMeta, Transaction } from '../lib/api';
-import { useCountUp } from '../hooks/useCountUp';
-import { formatUSDC, formatTimeAgo, getTypeMeta, truncateAddress } from '../lib/utils';
-import { Link } from 'react-router-dom';
-import clsx from 'clsx';
+  TrendingUp,
+  Database,
+  Zap,
+  Clock,
+  ArrowUpRight,
+  DollarSign,
+  Activity,
+  ChevronRight,
+} from "lucide-react";
+import { api, DatasetMeta, Transaction } from "../lib/api";
+import { useCountUp } from "../hooks/useCountUp";
+import {
+  formatUSDC,
+  formatTimeAgo,
+  getTypeMeta,
+  truncateAddress,
+} from "../lib/utils";
+import { Link } from "react-router-dom";
+import {
+  StatCardSkeleton,
+  TransactionRowSkeleton,
+  ChartSkeleton,
+} from "../components/ui/SkeletonLoader";
+import clsx from "clsx";
+import { useI18n } from "../i18n";
 
 /* ── Animated stat card ── */
 function StatCard({
-  icon: Icon, label, value, suffix = '', prefix = '', decimals = 0,
-  color = 'text-gold', trend
+  icon: Icon,
+  label,
+  value,
+  suffix = "",
+  prefix = "",
+  decimals = 0,
+  color = "text-gold",
+  trend,
+  locale = "en-US",
 }: {
-  icon: React.ElementType; label: string; value: number;
-  suffix?: string; prefix?: string; decimals?: number;
-  color?: string; trend?: number;
+  icon: React.ElementType;
+  label: string;
+  value: number;
+  suffix?: string;
+  prefix?: string;
+  decimals?: number;
+  color?: string;
+  trend?: number;
+  locale?: string;
 }) {
   const animated = useCountUp(value, 1800, decimals);
   return (
@@ -30,19 +68,29 @@ function StatCard({
           <Icon className="w-5 h-5 text-gold" />
         </div>
         {trend !== undefined && (
-          <span className={clsx(
-            'text-xs font-body font-medium flex items-center gap-0.5 px-2 py-1 rounded-full',
-            trend >= 0 ? 'text-emerald-400 bg-emerald-400/10' : 'text-red-400 bg-red-400/10'
-          )}>
-            <ArrowUpRight className={clsx('w-3 h-3', trend < 0 && 'rotate-180')} />
+          <span
+            className={clsx(
+              "text-xs font-body font-medium flex items-center gap-0.5 px-2 py-1 rounded-full",
+              trend >= 0
+                ? "text-emerald-400 bg-emerald-400/10"
+                : "text-red-400 bg-red-400/10",
+            )}
+          >
+            <ArrowUpRight
+              className={clsx("w-3 h-3", trend < 0 && "rotate-180")}
+            />
             {Math.abs(trend)}%
           </span>
         )}
       </div>
       <p className="font-display font-bold text-2xl text-foreground mb-0.5 tabular-nums">
         <span className={color}>{prefix}</span>
-        {decimals > 0 ? animated.toFixed(decimals) : Math.round(animated).toLocaleString()}
-        <span className="text-sm text-foreground-muted ml-1 font-body font-normal">{suffix}</span>
+        {decimals > 0
+          ? animated.toFixed(decimals)
+          : Math.round(animated).toLocaleString(locale)}
+        <span className="text-sm text-foreground-muted ml-1 font-body font-normal">
+          {suffix}
+        </span>
       </p>
       <p className="text-xs text-foreground-muted font-body">{label}</p>
     </div>
@@ -50,8 +98,20 @@ function StatCard({
 }
 
 /* ── Custom tooltip for charts ── */
-function ChartTooltip({ active, payload, label }: {
-  active?: boolean; payload?: Array<{ value: number; name: string }>; label?: string;
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  locale,
+  earnedLabel,
+  queriesLabel,
+}: {
+  active?: boolean;
+  payload?: Array<{ value: number; name: string }>;
+  label?: string;
+  locale: string;
+  earnedLabel: string;
+  queriesLabel: string;
 }) {
   if (!active || !payload?.length) return null;
   return (
@@ -59,7 +119,9 @@ function ChartTooltip({ active, payload, label }: {
       <p className="text-foreground-muted mb-1">{label}</p>
       {payload.map((p) => (
         <p key={p.name} className="text-gold font-semibold">
-          {p.name === 'earned' ? '$' : ''}{p.value.toFixed(p.name === 'earned' ? 4 : 0)} {p.name === 'earned' ? 'USDC' : 'queries'}
+          {p.name === earnedLabel ? "$" : ""}
+          {p.name === earnedLabel ? formatUSDC(p.value, locale) : p.value.toLocaleString(locale)}{" "}
+          {p.name === earnedLabel ? "USDC" : queriesLabel}
         </p>
       ))}
     </div>
@@ -67,16 +129,22 @@ function ChartTooltip({ active, payload, label }: {
 }
 
 /* ── Generate 7-day chart data from transactions ── */
-function buildChartData(transactions: Transaction[]) {
+function buildChartData(transactions: Transaction[], locale: string) {
   const days: Record<string, { queries: number; earned: number }> = {};
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const key = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const key = d.toLocaleDateString(locale, {
+      month: "short",
+      day: "numeric",
+    });
     days[key] = { queries: 0, earned: 0 };
   }
   transactions.forEach((tx) => {
-    const key = new Date(tx.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const key = new Date(tx.timestamp).toLocaleDateString(locale, {
+      month: "short",
+      day: "numeric",
+    });
     if (days[key]) {
       days[key].queries += 1;
       days[key].earned += tx.amount * 0.95;
@@ -86,28 +154,43 @@ function buildChartData(transactions: Transaction[]) {
 }
 
 export default function DashboardPage() {
+  const { locale, t } = useI18n();
   const [datasets, setDatasets] = useState<DatasetMeta[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [walletFilter, setWalletFilter] = useState('');
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [walletFilter, setWalletFilter] = useState("");
 
   useEffect(() => {
-    Promise.all([api.getDatasets()])
-      .then(([ds]) => {
+    setLoading(true);
+    setFetchError(null);
+    Promise.all([api.getDatasets(), api.getTransactions()])
+      .then(([ds, txs]) => {
         setDatasets(ds);
-        // Load transactions for all datasets
-        return Promise.all(ds.map((d) => api.getTransactions(d.id)));
+        setTransactions(txs);
+    api
+      .getDatasets()
+      .then((ds) => {
+        setDatasets(ds.data);
+        return Promise.all(ds.data.map((d) => api.getTransactions(d.id)));
       })
-      .then((txArrays) => setTransactions(txArrays.flat()))
+      .catch((err) => {
+        setFetchError(
+          err instanceof Error ? err.message : t("dashboard.loadError"),
+        );
+      })
       .finally(() => setLoading(false));
-  }, []);
+  }, [t]);
 
   const totalEarned = datasets.reduce((s, d) => s + d.totalEarned, 0);
   const totalQueries = datasets.reduce((s, d) => s + d.queriesServed, 0);
-  const chartData = buildChartData(transactions);
-  const recentTx = [...transactions].sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-  ).slice(0, 8);
+  const chartData = buildChartData(transactions, locale);
+  const recentTx = [...transactions]
+    .sort(
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+    )
+    .slice(0, 8);
 
   // Filter by seller wallet
   const uniqueWallets = [...new Set(datasets.map((d) => d.sellerWallet))];
@@ -117,10 +200,72 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen pt-28 pb-20 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-full border-2 border-gold/30 border-t-gold animate-spin mx-auto mb-4" />
-          <p className="text-foreground-muted font-body text-sm">Loading dashboard...</p>
+      <div className="min-h-screen pt-28 pb-20">
+        <div className="max-w-7xl mx-auto px-4">
+          {/* Header skeleton */}
+          <div className="mb-10">
+            <div className="h-4 w-32 bg-surface-2/60 rounded mb-2 animate-pulse" />
+            <div className="h-10 w-64 bg-surface-2/60 rounded mb-2 animate-pulse" />
+            <div className="h-5 w-96 bg-surface-2/60 rounded animate-pulse" />
+          </div>
+
+          {/* Stats row skeleton */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <StatCardSkeleton key={i} />
+            ))}
+          </div>
+
+          {/* Charts row skeleton */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div className="lg:col-span-2">
+              <ChartSkeleton />
+            </div>
+            <ChartSkeleton />
+          </div>
+
+          {/* Bottom section skeleton */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="glass-card p-6">
+              <div className="h-6 w-40 bg-surface-2/60 rounded mb-5 animate-pulse" />
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-20 bg-surface-2/40 rounded-xl animate-pulse"
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="glass-card p-6">
+              <div className="h-6 w-48 bg-surface-2/60 rounded mb-5 animate-pulse" />
+              <div className="space-y-2">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <TransactionRowSkeleton key={i} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (fetchError) {
+    return (
+      <div className="min-h-screen pt-28 flex items-center justify-center px-4">
+          <div className="glass-card max-w-md w-full p-8 text-center">
+          <p className="font-display text-xl font-semibold text-foreground mb-3">
+            {t("dashboard.loadError")}
+          </p>
+          <p className="text-sm text-foreground-muted font-body mb-6">{fetchError}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="btn-gold px-6 py-2.5 text-sm"
+          >
+            {t("common.actions.retry")}
+          </button>
         </div>
       </div>
     );
@@ -132,17 +277,22 @@ export default function DashboardPage() {
         {/* Header */}
         <div className="flex items-start justify-between mb-10">
           <div>
-            <p className="text-gold text-sm font-body font-medium tracking-widest uppercase mb-2">Seller Hub</p>
+            <p className="text-gold text-sm font-body font-medium tracking-widest uppercase mb-2">
+              {t("dashboard.eyebrow")}
+            </p>
             <h1 className="font-display text-4xl md:text-5xl font-bold text-foreground mb-2">
-              Dashboard
+              {t("dashboard.title")}
             </h1>
             <p className="text-foreground-muted font-body">
-              Your real-time earnings and dataset performance.
+              {t("dashboard.subtitle")}
             </p>
           </div>
-          <Link to="/sell" className="hidden md:flex btn-gold items-center gap-2 text-sm px-5 py-2.5">
+          <Link
+            to="/sell"
+            className="hidden md:flex btn-gold items-center gap-2 text-sm px-5 py-2.5"
+          >
             <Database className="w-4 h-4" />
-            List New Dataset
+            {t("common.actions.listNewDataset")}
           </Link>
         </div>
 
@@ -150,18 +300,26 @@ export default function DashboardPage() {
         {uniqueWallets.length > 1 && (
           <div className="flex flex-wrap gap-2 mb-6">
             <button
-              onClick={() => setWalletFilter('')}
-              className={clsx('px-3 py-1.5 rounded-lg text-xs font-body font-medium transition-all',
-                !walletFilter ? 'bg-gold text-void' : 'bg-surface-2 text-foreground-muted hover:text-foreground')}
+              onClick={() => setWalletFilter("")}
+              className={clsx(
+                "px-3 py-1.5 rounded-lg text-xs font-body font-medium transition-all",
+                !walletFilter
+                  ? "bg-gold text-void"
+                  : "bg-surface-2 text-foreground-muted hover:text-foreground",
+              )}
             >
-              All Sellers
+              {t("dashboard.allSellers")}
             </button>
             {uniqueWallets.map((w) => (
               <button
                 key={w}
                 onClick={() => setWalletFilter(w)}
-                className={clsx('px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all',
-                  walletFilter === w ? 'bg-gold text-void' : 'bg-surface-2 text-foreground-muted hover:text-foreground')}
+                className={clsx(
+                  "px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all",
+                  walletFilter === w
+                    ? "bg-gold text-void"
+                    : "bg-surface-2 text-foreground-muted hover:text-foreground",
+                )}
               >
                 {truncateAddress(w)}
               </button>
@@ -172,49 +330,94 @@ export default function DashboardPage() {
         {/* Stats row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <StatCard
-            icon={DollarSign} label="Total USDC Earned" value={totalEarned}
-            prefix="$" decimals={4} color="text-gold" trend={12}
+            icon={DollarSign}
+            label={t("dashboard.stats.totalEarned")}
+            value={totalEarned}
+            prefix="$"
+            decimals={4}
+            color="text-gold"
+            locale={locale}
           />
           <StatCard
-            icon={Zap} label="Total Queries Served" value={totalQueries}
-            suffix="queries" trend={8}
+            icon={Zap}
+            label={t("dashboard.stats.totalQueries")}
+            value={totalQueries}
+            suffix={t("common.units.queries")}
+            locale={locale}
           />
           <StatCard
-            icon={Database} label="Active Datasets" value={filteredDatasets.length}
-            suffix="listed"
+            icon={Database}
+            label={t("dashboard.stats.activeDatasets")}
+            value={filteredDatasets.length}
+            suffix={t("common.units.listed")}
+            locale={locale}
           />
           <StatCard
-            icon={Activity} label="Transactions" value={transactions.length}
-            suffix="total"
+            icon={Activity}
+            label={t("dashboard.stats.transactions")}
+            value={transactions.length}
+            suffix={t("common.units.total")}
+            locale={locale}
           />
         </div>
 
         {/* Charts row */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
           {/* Earnings area chart */}
-          <div className="lg:col-span-2 glass-card p-6">
+          <div className="lg:col-span-2 glass-card p-6 min-w-0">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="font-display font-semibold text-foreground">Earnings — Last 7 Days</h3>
-                <p className="text-xs text-foreground-muted font-body mt-0.5">USDC received (95% of query price)</p>
+                <h3 className="font-display font-semibold text-foreground">
+                  {t("dashboard.charts.earningsTitle")}
+                </h3>
+                <p className="text-xs text-foreground-muted font-body mt-0.5">
+                  {t("dashboard.charts.earningsSubtitle")}
+                </p>
               </div>
               <TrendingUp className="w-5 h-5 text-gold" />
             </div>
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={chartData} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+            <div className="h-[220px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart
+                  data={chartData}
+                  margin={{ top: 5, right: 5, left: 0, bottom: 0 }}
+                >
                 <defs>
                   <linearGradient id="goldGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#C9A84C" stopOpacity={0.3} />
                     <stop offset="95%" stopColor="#C9A84C" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                <XAxis dataKey="day" tick={{ fill: '#6B7280', fontSize: 10 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#6B7280', fontSize: 10 }} axisLine={false} tickLine={false} />
-                <Tooltip content={<ChartTooltip />} />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="rgba(255,255,255,0.04)"
+                />
+                <XAxis
+                  dataKey="day"
+                  tick={{ fill: "#6B7280", fontSize: 10 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fill: "#6B7280", fontSize: 10 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
+                  content={
+                    <ChartTooltip
+                      locale={locale}
+                      earnedLabel={t("dashboard.charts.earnedSeries")}
+                      queriesLabel={t("common.units.queries")}
+                    />
+                  }
+                />
                 <Area
-                  type="monotone" dataKey="earned" name="earned"
-                  stroke="#C9A84C" strokeWidth={2}
+                  type="monotone"
+                  dataKey="earned"
+                  name={t("dashboard.charts.earnedSeries")}
+                  stroke="#C9A84C"
+                  strokeWidth={2}
                   fill="url(#goldGrad)"
                 />
               </AreaChart>
@@ -222,23 +425,62 @@ export default function DashboardPage() {
           </div>
 
           {/* Queries bar chart */}
-          <div className="glass-card p-6">
+          <div className="glass-card p-6 min-w-0">
             <div className="flex items-center justify-between mb-6">
               <div>
-                <h3 className="font-display font-semibold text-foreground">Daily Queries</h3>
-                <p className="text-xs text-foreground-muted font-body mt-0.5">Requests served per day</p>
+                <h3 className="font-display font-semibold text-foreground">
+                  {t("dashboard.charts.queriesTitle")}
+                </h3>
+                <p className="text-xs text-foreground-muted font-body mt-0.5">
+                  {t("dashboard.charts.queriesSubtitle")}
+                </p>
               </div>
               <Activity className="w-5 h-5 text-gold" />
             </div>
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chartData} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
-                <XAxis dataKey="day" tick={{ fill: '#6B7280', fontSize: 9 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#6B7280', fontSize: 10 }} axisLine={false} tickLine={false} />
-                <Tooltip content={<ChartTooltip />} />
-                <Bar dataKey="queries" name="queries" radius={[4, 4, 0, 0]}>
+            <div className="h-[220px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={chartData}
+                  margin={{ top: 5, right: 5, left: 0, bottom: 0 }}
+                >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="rgba(255,255,255,0.04)"
+                />
+                <XAxis
+                  dataKey="day"
+                  tick={{ fill: "#6B7280", fontSize: 9 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fill: "#6B7280", fontSize: 10 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip
+                  content={
+                    <ChartTooltip
+                      locale={locale}
+                      earnedLabel={t("dashboard.charts.earnedSeries")}
+                      queriesLabel={t("common.units.queries")}
+                    />
+                  }
+                />
+                <Bar
+                  dataKey="queries"
+                  name={t("dashboard.charts.queriesSeries")}
+                  radius={[4, 4, 0, 0]}
+                >
                   {chartData.map((_, i) => (
-                    <Cell key={i} fill={i === chartData.length - 1 ? '#C9A84C' : 'rgba(201,168,76,0.35)'} />
+                    <Cell
+                      key={i}
+                      fill={
+                        i === chartData.length - 1
+                          ? "#C9A84C"
+                          : "rgba(201,168,76,0.35)"
+                      }
+                    />
                   ))}
                 </Bar>
               </BarChart>
@@ -251,38 +493,64 @@ export default function DashboardPage() {
           {/* Dataset performance */}
           <div className="glass-card p-6">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-display font-semibold text-foreground">Your Datasets</h3>
-              <Link to="/marketplace" className="text-xs text-gold hover:text-gold-light font-body flex items-center gap-1 transition-colors">
-                View all <ChevronRight className="w-3 h-3" />
+              <h3 className="font-display font-semibold text-foreground">
+                {t("dashboard.datasets.title")}
+              </h3>
+              <Link
+                to="/marketplace"
+                className="text-xs text-gold hover:text-gold-light font-body flex items-center gap-1 transition-colors"
+              >
+                {t("common.actions.viewAll")} <ChevronRight className="w-3 h-3" />
               </Link>
             </div>
             <div className="space-y-3">
               {filteredDatasets.length === 0 ? (
                 <div className="text-center py-8">
                   <Database className="w-8 h-8 text-muted mx-auto mb-2" />
-                  <p className="text-sm text-foreground-muted font-body">No datasets yet</p>
-                  <Link to="/sell" className="text-xs text-gold hover:text-gold-light font-body mt-1 inline-block">
-                    List your first dataset →
+                  <p className="text-sm text-foreground-muted font-body">
+                    {t("dashboard.datasets.empty")}
+                  </p>
+                  <Link
+                    to="/sell"
+                    className="text-xs text-gold hover:text-gold-light font-body mt-1 inline-block"
+                  >
+                    {t("common.actions.listFirstDataset")} →
                   </Link>
                 </div>
               ) : (
                 filteredDatasets.map((ds) => {
                   const typeMeta = getTypeMeta(ds.type);
-                  const maxEarned = Math.max(...filteredDatasets.map((d) => d.totalEarned), 1);
+                  const maxEarned = Math.max(
+                    ...filteredDatasets.map((d) => d.totalEarned),
+                    1,
+                  );
                   return (
-                    <div key={ds.id} className="group p-4 rounded-xl bg-surface-2/50 hover:bg-surface-2 border border-border/30 hover:border-border-gold/20 transition-all duration-200">
+                    <div
+                      key={ds.id}
+                      className="group p-4 rounded-xl bg-surface-2/50 hover:bg-surface-2 border border-border/30 hover:border-border-gold/20 transition-all duration-200"
+                    >
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div className="flex-1 min-w-0">
-                          <span className={clsx('type-badge text-xs mb-1 inline-flex', typeMeta.color, typeMeta.bg)}>
-                            {typeMeta.label}
+                          <span
+                            className={clsx(
+                              "type-badge text-xs mb-1 inline-flex",
+                              typeMeta.color,
+                              typeMeta.bg,
+                            )}
+                          >
+                            {typeMeta.labelKey ? t(typeMeta.labelKey) : typeMeta.label}
                           </span>
                           <p className="text-sm font-body font-medium text-foreground truncate group-hover:text-gold transition-colors">
                             {ds.name}
                           </p>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <p className="text-sm font-display font-bold text-gold">${formatUSDC(ds.totalEarned)}</p>
-                          <p className="text-xs text-muted-2 font-body">{ds.queriesServed} queries</p>
+                          <p className="text-sm font-display font-bold text-gold">
+                            ${formatUSDC(ds.totalEarned, locale)}
+                          </p>
+                          <p className="text-xs text-muted-2 font-body">
+                            {ds.queriesServed.toLocaleString(locale)} {t("common.units.queries")}
+                          </p>
                         </div>
                       </div>
                       {/* Progress bar */}
@@ -291,8 +559,9 @@ export default function DashboardPage() {
                           className="h-full rounded-full"
                           style={{
                             width: `${(ds.totalEarned / maxEarned) * 100}%`,
-                            background: 'linear-gradient(90deg, #C9A84C, #E8C96A)',
-                            transition: 'width 1s ease-out',
+                            background:
+                              "linear-gradient(90deg, #C9A84C, #E8C96A)",
+                            transition: "width 1s ease-out",
                           }}
                         />
                       </div>
@@ -306,13 +575,17 @@ export default function DashboardPage() {
           {/* Recent transactions */}
           <div className="glass-card p-6">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="font-display font-semibold text-foreground">Recent Transactions</h3>
+              <h3 className="font-display font-semibold text-foreground">
+                {t("dashboard.transactions.title")}
+              </h3>
               <Clock className="w-4 h-4 text-muted" />
             </div>
             {recentTx.length === 0 ? (
               <div className="text-center py-8">
                 <Activity className="w-8 h-8 text-muted mx-auto mb-2" />
-                <p className="text-sm text-foreground-muted font-body">No transactions yet</p>
+                <p className="text-sm text-foreground-muted font-body">
+                  {t("dashboard.transactions.empty")}
+                </p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -328,17 +601,21 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-body font-medium text-foreground truncate">
-                          {ds?.name ?? 'Unknown Dataset'}
+                          {ds?.name ?? t("dashboard.datasets.unknownDataset")}
                         </p>
                         <p className="text-xs text-muted-2 font-mono truncate">
-                          {tx.txHash.startsWith('demo') ? 'demo-mode' : tx.txHash.slice(0, 20) + '...'}
+                          {tx.txHash.startsWith("demo")
+                            ? t("dashboard.transactions.demoMode")
+                            : tx.txHash.slice(0, 20) + "..."}
                         </p>
                       </div>
                       <div className="text-right flex-shrink-0">
                         <p className="text-sm font-display font-bold text-gold">
                           +${(tx.amount * 0.95).toFixed(4)}
                         </p>
-                        <p className="text-xs text-muted-2 font-body">{formatTimeAgo(tx.timestamp)}</p>
+                        <p className="text-xs text-muted-2 font-body">
+                          {formatTimeAgo(tx.timestamp, locale)}
+                        </p>
                       </div>
                     </div>
                   );
@@ -355,10 +632,14 @@ export default function DashboardPage() {
               Ready to list more data?
             </h3>
             <p className="text-sm text-foreground-muted font-body">
-              Every dataset you list is a new passive income stream — running 24/7 on Stellar.
+              Every dataset you list is a new passive income stream — running
+              24/7 on Stellar.
             </p>
           </div>
-          <Link to="/sell" className="btn-gold flex items-center gap-2 text-sm px-6 py-3 flex-shrink-0">
+          <Link
+            to="/sell"
+            className="btn-gold flex items-center gap-2 text-sm px-6 py-3 flex-shrink-0"
+          >
             <Database className="w-4 h-4" />
             List New Dataset
           </Link>
