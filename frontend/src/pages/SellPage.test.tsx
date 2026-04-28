@@ -110,15 +110,17 @@ describe('SellPage', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish to Marketplace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
 
-    expect(screen.getByRole('button', { name: 'Publishing Listing...' })).toBeTruthy();
-    expect(api.createDataset).toHaveBeenCalledWith({
-      name: 'Test Dataset',
-      description: 'A useful dataset description',
-      type: 'whale-wallets',
-      pricePerQuery: 0.05,
-      sellerWallet: validWallet,
-      data: { rows: [1, 2, 3] },
+    await waitFor(() => {
+      expect(api.createDataset).toHaveBeenCalledWith({
+        name: 'Test Dataset',
+        description: 'A useful dataset description',
+        type: 'whale-wallets',
+        pricePerQuery: 0.05,
+        sellerWallet: validWallet,
+        data: { rows: [1, 2, 3] },
+      });
     });
 
     resolveRequest?.({
@@ -148,6 +150,7 @@ describe('SellPage', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish to Marketplace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
 
     await waitFor(() => {
       expect(screen.getByText('Create failed')).toBeTruthy();

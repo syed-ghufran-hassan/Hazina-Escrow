@@ -72,6 +72,7 @@ describe('BackupService', () => {
 
   it('should get backup statistics', async () => {
     await backupService.createBackup();
+    await new Promise(resolve => setTimeout(resolve, 5));
     await backupService.createBackup();
 
     const stats = backupService.getBackupStats();
@@ -95,11 +96,11 @@ describe('BackupService', () => {
 
   it('should create safety backup before restoring', async () => {
     const metadata = await backupService.createBackup();
-    
+
     await backupService.restoreBackup(metadata.filename);
 
     const backupsAfterRestore = backupService.listBackups();
-    
+
     // Safety backup should exist (may have been rotated if maxBackups exceeded)
     const safetyBackup = backupsAfterRestore.find(b => b.filename.startsWith('pre-restore-'));
     // Either the safety backup exists, or we have at least the original backup

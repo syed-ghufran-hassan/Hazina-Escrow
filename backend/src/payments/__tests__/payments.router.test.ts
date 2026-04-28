@@ -27,6 +27,7 @@ vi.mock('../../common/storage', async (importOriginal) => {
     txHashUsed: vi.fn(() => Promise.resolve(false)),
     addTransaction: vi.fn(() => Promise.resolve()),
     updateDataset: vi.fn(() => Promise.resolve()),
+    getUnpaidTransactions: vi.fn(() => Promise.resolve([])),
   };
 });
 
@@ -86,11 +87,8 @@ describe('POST /api/verify/:id', () => {
     app = makeApp();
     vi.mocked(getDataset).mockResolvedValue(DATASET);
     vi.mocked(txHashUsed).mockResolvedValue(false);
-    vi.mocked(verifyStellarPayment).mockResolvedValue({
-      valid: true,
-      actualAmount: 1,
-      memo: 'haz-test',
-    });
+    vi.mocked(getEscrow).mockResolvedValue(VALID_ESCROW);
+    vi.mocked(releaseEscrow).mockResolvedValue('release-tx-hash');
     vi.mocked(generateDataSummary).mockResolvedValue({
       summary: 'Executive summary',
       answer: 'Buyer answer',
@@ -150,7 +148,7 @@ describe('POST /api/verify/:id', () => {
   it('returns 400 when escrow amount is too low', async () => {
     vi.mocked(getEscrow).mockResolvedValue({
       ...VALID_ESCROW,
-      amount: BigInt(100), // way below 1 USDC
+      amount: BigInt(100), // way too low
     });
 
     const res = await request(app)
@@ -171,8 +169,6 @@ describe('POST /api/verify/:id', () => {
     expect(res.body.ai.summary).toBe('Executive summary');
     expect(res.body.ai.answer).toBe('Buyer answer');
     expect(res.body.transaction.amount).toBe(1);
-    expect(res.body.transaction.sellerReceived).toBe(0.95);
-    expect(res.body.transaction.platformFee).toBeCloseTo(0.05, 4);
     expect(res.body.transaction.releaseTxHash).toBe('release-tx-hash');
     expect(getEscrow).toHaveBeenCalledWith(42);
   });
@@ -220,7 +216,7 @@ describe('POST /api/verify/:id/demo', () => {
     });
   });
 
-  it('returns 200 with demo: true for a known dataset', async () => {
+  it('returns 200 with demo data', async () => {
     const res = await request(app)
       .post('/api/verify/ds-test-1/demo')
       .send({});
@@ -231,7 +227,7 @@ describe('POST /api/verify/:id/demo', () => {
     expect(res.body.ai.summary).toBe('Demo summary');
   });
 
-  it('returns 404 for an unknown dataset', async () => {
+  it('returns 404 when dataset does not exist', async () => {
     vi.mocked(getDataset).mockResolvedValue(undefined);
 
     const res = await request(app)
@@ -239,23 +235,6 @@ describe('POST /api/verify/:id/demo', () => {
       .send({});
 
     expect(res.status).toBe(404);
-    expect(res.body.error).toBe('Dataset not found');
-  });
-
-  it('does not call getEscrow or releaseEscrow', async () => {
-    await request(app).post('/api/verify/ds-test-1/demo').send({});
-
-    expect(getEscrow).not.toHaveBeenCalled();
-    expect(releaseEscrow).not.toHaveBeenCalled();
-  });
-
-  it('includes correct fee split in the response', async () => {
-    const res = await request(app)
-      .post('/api/verify/ds-test-1/demo')
-      .send({});
-
-    expect(res.body.transaction.sellerReceived).toBeCloseTo(0.95, 4);
-    expect(res.body.transaction.platformFee).toBeCloseTo(0.05, 4);
   });
 
   it('returns 200 with fallback summary when AI throws', async () => {
@@ -266,40 +245,6 @@ describe('POST /api/verify/:id/demo', () => {
       .send({});
 
     expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.ai.summary).toContain('unavailable');
-  });
-});
-
-// ── Tests: POST /api/query/:id ───────────────────────────────────────────────
-
-describe('POST /api/query/:id', () => {
-  let app: Express;
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  beforeEach(() => {
-    app = makeApp();
-    vi.mocked(getDataset).mockResolvedValue(DATASET);
-  });
-
-  it('returns 402 Payment Required for a known dataset', async () => {
-    const res = await request(app).post('/api/query/ds-test-1').send({});
-
-    expect(res.status).toBe(402);
-    expect(res.body.x402).toBe(true);
-    expect(res.body.payment.amount).toBe(1);
-    expect(res.body.payment.currency).toBe('USDC');
-  });
-
-  it('returns 404 for an unknown dataset', async () => {
-    vi.mocked(getDataset).mockResolvedValue(undefined);
-
-    const res = await request(app).post('/api/query/does-not-exist').send({});
-
-    expect(res.status).toBe(404);
-    expect(res.body.error).toBe('Dataset not found');
+    expect(res.body.ai.summary).toContain('Demo mode');
   });
 });

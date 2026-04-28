@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
 const {
   mockTransactionCall,
   mockOperationCall,
@@ -63,6 +65,7 @@ describe('verifyStellarPayment', () => {
           type: 'payment',
           to: destinationAddress,
           asset_code: 'USDC',
+          asset_issuer: TESTNET_USDC_ISSUER,
           amount: '1.0000',
         },
       ],
@@ -91,6 +94,7 @@ describe('verifyStellarPayment', () => {
           type: 'payment',
           to: destinationAddress,
           asset_code: 'USDC',
+          asset_issuer: TESTNET_USDC_ISSUER,
           amount: '1.0000',
         },
       ],
@@ -117,6 +121,7 @@ describe('verifyStellarPayment', () => {
           type: 'payment',
           to: destinationAddress,
           asset_code: 'USDC',
+          asset_issuer: TESTNET_USDC_ISSUER,
           amount: '0.7000',
         },
       ],
