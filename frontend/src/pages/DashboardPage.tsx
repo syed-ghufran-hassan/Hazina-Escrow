@@ -56,10 +56,11 @@ function StatCard({
   prefix?: string;
   decimals?: number;
   color?: string;
-  trend?: number;
+  trend?: number | null;
   locale?: string;
 }) {
   const animated = useCountUp(value, 1800, decimals);
+  const trendValid = trend !== undefined && trend !== null && isFinite(trend) && !isNaN(trend);
   return (
     <div className="glass-card-gold p-5">
       <div className="flex items-start justify-between mb-3">
@@ -70,11 +71,17 @@ function StatCard({
           <span
             className={clsx(
               'text-xs font-body font-medium flex items-center gap-0.5 px-2 py-1 rounded-full',
-              trend >= 0 ? 'text-emerald-400 bg-emerald-400/10' : 'text-red-400 bg-red-400/10',
+              !trendValid
+                ? 'text-foreground-muted bg-surface-2'
+                : trend >= 0
+                  ? 'text-emerald-400 bg-emerald-400/10'
+                  : 'text-red-400 bg-red-400/10',
             )}
           >
-            <ArrowUpRight className={clsx('w-3 h-3', trend < 0 && 'rotate-180')} />
-            {Math.abs(trend)}%
+            {trendValid && (
+              <ArrowUpRight className={clsx('w-3 h-3', trend < 0 && 'rotate-180')} />
+            )}
+            {trendValid ? `${Math.abs(trend).toFixed(1)}%` : '—'}
           </span>
         )}
       </div>
@@ -121,6 +128,12 @@ function ChartTooltip({
   );
 }
 
+/* ── Safe percentage change (returns null when previous is 0 to avoid NaN/Infinity) ── */
+function safePctChange(current: number, previous: number): number | null {
+  if (previous === 0) return null;
+  return ((current - previous) / previous) * 100;
+}
+
 /* ── Generate 7-day chart data from transactions ── */
 function buildChartData(transactions: Transaction[], locale: string) {
   const days: Record<string, { queries: number; earned: number }> = {};
@@ -157,54 +170,62 @@ export default function DashboardPage() {
   const [walletFilter, setWalletFilter] = useState('');
   const hasLoadedOnceRef = useRef(false);
 
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
-
-  // WebSocket connection for real-time updates
-  const { connected: wsConnected, error: wsError } = useTransactionWebSocket(
-    {
-      datasetIds: datasets.map(d => d.id),
-      enabled: hasLoadedOnce,
-    },
-    {
-      onTransactionUpdate: () => {
-        // Refetch data when transaction updates arrive
-        setIsRefetching(true);
-        void loadDashboard();
-      },
-    }
-  );
-
-  const loadDashboard = async () => {
-  const loadDashboard = async () => {
-    if (hasLoadedOnceRef.current) {
-      setIsRefetching(true);
-    } else {
-      setLoading(true);
-    }
-    setFetchError(null);
-
-    try {
-      const [ds, txs] = await Promise.all([api.getDatasets(), api.getTransactions()]);
-
-      setDatasets(ds.data);
-      setTransactions(txs);
-      setHasLoadedOnce(true);
-      hasLoadedOnceRef.current = true;
-    } catch (err) {
-      setFetchError(err instanceof Error ? err.message : t('dashboard.loadError'));
-    } finally {
-      setLoading(false);
-      setIsRefetching(false);
-    }
-  };
-
   useEffect(() => {
+    let cancelled = false;
+
+    const loadDashboard = async () => {
+      if (hasLoadedOnceRef.current) {
+        setIsRefetching(true);
+      } else {
+        setLoading(true);
+      }
+      setFetchError(null);
+
+      try {
+        const [ds, txs] = await Promise.all([api.getDatasets(), api.getTransactions()]);
+        if (cancelled) {
+          return;
+        }
+
+        setDatasets(ds.data);
+        setTransactions(txs);
+        setHasLoadedOnce(true);
+        hasLoadedOnceRef.current = true;
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+
+        setFetchError(err instanceof Error ? err.message : t('dashboard.loadError'));
+      } finally {
+        if (cancelled) {
+          return;
+        }
+
+        setLoading(false);
+        setIsRefetching(false);
+      }
+    };
+
     void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
   }, [t]);
 
   const totalEarned = datasets.reduce((s, d) => s + d.totalEarned, 0);
   const totalQueries = datasets.reduce((s, d) => s + d.queriesServed, 0);
   const chartData = buildChartData(transactions, locale);
+
+  // Compare last 3 days vs preceding 4 days for trend indicators
+  const recentEarned = chartData.slice(-3).reduce((s, d) => s + d.earned, 0);
+  const prevEarned = chartData.slice(0, 4).reduce((s, d) => s + d.earned, 0);
+  const earnedTrend = safePctChange(recentEarned, prevEarned);
+
+  const recentQueries = chartData.slice(-3).reduce((s, d) => s + d.queries, 0);
+  const prevQueries = chartData.slice(0, 4).reduce((s, d) => s + d.queries, 0);
+  const queriesTrend = safePctChange(recentQueries, prevQueries);
   const recentTx = [...transactions]
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 8);
@@ -362,6 +383,7 @@ export default function DashboardPage() {
             prefix="$"
             decimals={4}
             color="text-gold"
+            trend={earnedTrend}
             locale={locale}
           />
           <StatCard
@@ -369,6 +391,7 @@ export default function DashboardPage() {
             label={t('dashboard.stats.totalQueries')}
             value={totalQueries}
             suffix={t('common.units.queries')}
+            trend={queriesTrend}
             locale={locale}
           />
           <StatCard

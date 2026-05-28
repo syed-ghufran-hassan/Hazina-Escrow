@@ -21,6 +21,26 @@ vi.mock("../payments/payments.service", () => ({
   markDeliveryFailure: vi.fn(),
 }));
 
+vi.mock("../common/storage", async () => {
+  const actual = await vi.importActual("../common/storage");
+  let mockTransactions: any[] = [];
+  return {
+    ...actual,
+    getTransactionByMemo: vi.fn((memo: string) => {
+      return mockTransactions.find((tx: any) => tx.memo === memo);
+    }),
+    addTransaction: vi.fn(async (tx: any) => {
+      mockTransactions.push(tx);
+      return tx;
+    }),
+    writeStore: actual.writeStore,
+    readStore: actual.readStore,
+    _clearMockTransactions: () => {
+      mockTransactions = [];
+    },
+  };
+});
+
 import { webhooksRouter } from "./webhook.router";
 import { addTransaction, writeStore, Store } from "../common/storage";
 import { signPayload } from "./webhook.service";
@@ -34,6 +54,12 @@ describe("Webhook Router", () => {
   let app: Express;
 
   beforeEach(async () => {
+    // Clear mock transactions
+    const storage = await import("../common/storage") as any;
+    if (storage._clearMockTransactions) {
+      storage._clearMockTransactions();
+    }
+
     // Backup current store
     if (fs.existsSync(DATA_PATH)) {
       fs.copyFileSync(DATA_PATH, BACKUP_PATH);
@@ -74,6 +100,9 @@ describe("Webhook Router", () => {
         status: "pending",
         timestamp: new Date().toISOString()
       });
+
+      // Wait for storage to be written
+      await new Promise(resolve => setTimeout(resolve, 100));
 
       const bodyString = JSON.stringify(validPayload);
       const signature = signPayload(bodyString, "test-secret");

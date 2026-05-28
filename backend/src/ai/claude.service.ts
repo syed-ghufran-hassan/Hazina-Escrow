@@ -88,7 +88,7 @@ export async function generateDataSummary(
 
     return parseClaudeSummaryResponse(fullText, Boolean(question));
   } catch (err: unknown) {
-    if (err instanceof Anthropic.APITimeoutError) {
+    if (err && typeof err === 'object' && 'name' in err && err.name === 'APITimeoutError') {
       throw new AnthropicTimeoutError(ANTHROPIC_TIMEOUT_MS);
     }
     throw err;

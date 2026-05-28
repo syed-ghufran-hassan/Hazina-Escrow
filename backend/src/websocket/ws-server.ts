@@ -1,5 +1,7 @@
-import { Server as HTTPServer } from 'http';
+import { Server as HTTPServer, IncomingMessage } from 'http';
+import type { RawData } from 'ws';
 import { WebSocketServer, WebSocket } from 'ws';
+
 import { randomUUID } from 'crypto';
 import { Sentry } from '../common/sentry';
 import { transactionEventEmitter } from './transaction-events';
@@ -27,6 +29,8 @@ interface ClientSession {
 export class WebSocketServer_Hazina {
   private wss: WebSocketServer;
   private clients: Map<string, ClientSession> = new Map();
+  private clientCounter: number = 0;
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   // private clientCounter: number = 0; // Removed - using UUID instead
   private heartbeatInterval: NodeJS.Timer | null = null;
@@ -58,6 +62,8 @@ export class WebSocketServer_Hazina {
   /**
    * Handle new WebSocket connections
    */
+  private handleConnection(ws: WebSocket, _req: IncomingMessage): void {
+    const clientId = `client_${++this.clientCounter}`;
   private handleConnection(ws: WebSocket, _req: unknown): void {
     const clientId = `client_${randomUUID()}`;
     const session: ClientSession = {
@@ -102,7 +108,7 @@ export class WebSocketServer_Hazina {
   /**
    * Handle incoming client messages
    */
-  private handleMessage(clientId: string, data: WebSocket.Data): void {
+  private handleMessage(clientId: string, data: any): void {
     const session = this.clients.get(clientId);
     if (!session) return;
 
@@ -221,6 +227,9 @@ export class WebSocketServer_Hazina {
   private attachEventListeners(): void {
     transactionEventEmitter.on('transaction:update', event => {
       this.broadcastToSubscribers(event, (session, evt) => {
+        return (
+          session.subscribed.datasetIds.has(evt.data.datasetId) ||
+          session.subscribed.transactionIds.has(evt.data.transactionId)
         const dataEvent = evt as unknown;
         return (
           session.subscribed.datasetIds.has(dataEvent.data.datasetId) ||
@@ -231,6 +240,9 @@ export class WebSocketServer_Hazina {
 
     transactionEventEmitter.on('payment:received', event => {
       this.broadcastToSubscribers(event, (session, evt) => {
+        return (
+          session.subscribed.datasetIds.has(evt.data.datasetId) ||
+          session.subscribed.transactionIds.has(evt.data.transactionId)
         const dataEvent = evt as unknown;
         return (
           session.subscribed.datasetIds.has(dataEvent.data.datasetId) ||
@@ -241,6 +253,10 @@ export class WebSocketServer_Hazina {
 
     transactionEventEmitter.on('payment:forwarded', event => {
       this.broadcastToSubscribers(event, (session, evt) => {
+        return (
+          session.subscribed.datasetIds.has(evt.data.datasetId) ||
+          session.subscribed.transactionIds.has(evt.data.transactionId)
+
         const dataEvent = evt as unknown;
         return (
           session.subscribed.datasetIds.has(dataEvent.data.datasetId) ||
@@ -251,6 +267,9 @@ export class WebSocketServer_Hazina {
 
     transactionEventEmitter.on('dataset:queried', event => {
       this.broadcastToSubscribers(event, (session, evt) => {
+        return (
+          session.subscribed.datasetIds.has(evt.data.datasetId) ||
+          session.subscribed.transactionIds.has(evt.data.transactionId)
         const dataEvent = evt as unknown;
         return (
           session.subscribed.datasetIds.has(dataEvent.data.datasetId) ||
@@ -286,6 +305,10 @@ export class WebSocketServer_Hazina {
   /**
    * Send a message to a specific client
    */
+  private sendMessage(
+    clientId: string,
+    message: ServerEvent | PongMessage | ErrorMessage | Record<string, unknown>,
+  ): void {
   private sendMessage(clientId: string, message: unknown): void {
     const session = this.clients.get(clientId);
     if (session && session.ws.readyState === WebSocket.OPEN) {
