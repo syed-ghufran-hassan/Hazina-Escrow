@@ -15,44 +15,46 @@ describe('WebSocket Server', () => {
     const app = express();
     server = http.createServer(app);
 
-    await new Promise<void>((resolve) => {
-      server.listen(0, () => {
-        const addr = server.address();
-        if (typeof addr === 'object' && addr !== null) {
-          port = addr.port;
-          wsUrl = `ws://localhost:${port}/ws`;
-          wsServer = initializeWebSocketServer(server, 'test-api-key');
-          resolve();
-        }
-      });
-    });
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const addr = server.address();
+    if (typeof addr === 'object' && addr !== null) {
+      port = addr.port;
+      wsUrl = `ws://localhost:${port}/ws`;
+      wsServer = initializeWebSocketServer(server, 'test-api-key');
+    }
   });
 
   afterAll(async () => {
-    wsServer.shutdown();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (wsServer) wsServer.shutdown();
+    await new Promise<void>((resolve, reject) =>
+      server.close(err => (err ? reject(err) : resolve())),
+    );
   });
 
-  it('should accept WebSocket connections', async () => {
-    const client = new WebSocket(wsUrl);
+  it('should accept WebSocket connections', () => {
+    return new Promise<void>((resolve, reject) => {
+      const client = new WebSocket(wsUrl);
 
-    await new Promise<void>((resolve, reject) => {
       client.on('open', () => {
-        expect(client.readyState).toBe(WebSocket.OPEN);
-        client.close();
-        resolve();
+        try {
+          expect(client.readyState).toBe(WebSocket.OPEN);
+          client.close();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
       });
 
-      client.on('error', (error) => {
+      client.on('error', error => {
         reject(error);
       });
     });
   });
 
-  it('should handle subscribe messages', async () => {
-    const client = new WebSocket(wsUrl);
+  it('should handle subscribe messages', () => {
+    return new Promise<void>((resolve, reject) => {
+      const client = new WebSocket(wsUrl);
 
-    await new Promise<void>((resolve, reject) => {
       client.on('open', () => {
         const subscribe = {
           type: 'subscribe',
@@ -62,52 +64,60 @@ describe('WebSocket Server', () => {
         client.send(JSON.stringify(subscribe));
       });
 
-      client.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
-        expect(msg.datasetIds).toContain('dataset-1');
-        expect(msg.datasetIds).toContain('dataset-2');
-        expect(msg.transactionIds).toContain('tx-1');
-        client.close();
-        resolve();
+      client.on('message', data => {
+        try {
+          const msg = JSON.parse(data.toString());
+          expect(msg.datasetIds).toContain('dataset-1');
+          expect(msg.datasetIds).toContain('dataset-2');
+          expect(msg.transactionIds).toContain('tx-1');
+          client.close();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
       });
 
-      client.on('error', (error) => {
+      client.on('error', error => {
         reject(error);
       });
     });
   });
 
-  it('should handle ping/pong', async () => {
-    const client = new WebSocket(wsUrl);
+  it('should handle ping/pong', () => {
+    return new Promise<void>((resolve, reject) => {
+      const client = new WebSocket(wsUrl);
 
-    await new Promise<void>((resolve, reject) => {
       client.on('open', () => {
         client.send(JSON.stringify({ type: 'ping' }));
       });
 
-      client.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === 'pong') {
-          expect(msg.type).toBe('pong');
-          client.close();
-          resolve();
+      client.on('message', data => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'pong') {
+            expect(msg.type).toBe('pong');
+            client.close();
+            resolve();
+          }
+        } catch (err) {
+          reject(err);
         }
       });
 
-      client.on('error', (error) => {
+      client.on('error', error => {
         reject(error);
       });
     });
   });
 
-  it('should broadcast transaction updates to subscribed clients', async () => {
-    const client1 = new WebSocket(wsUrl);
-    const client2 = new WebSocket(wsUrl);
-    let client1Ready = false;
-    let client2Ready = false;
-    let client2ReceivedUpdate = false;
+  it('should broadcast transaction updates to subscribed clients', () => {
+    return new Promise<void>((resolve, reject) => {
+      const client1 = new WebSocket(wsUrl);
+      const client2 = new WebSocket(wsUrl);
+      let client1Ready = false;
+      let client2Ready = false;
+      let client2ReceivedUpdate = false;
 
-    await new Promise<void>((resolve, reject) => {
       const checkDone = () => {
         if (client2ReceivedUpdate) {
           client1.close();
@@ -121,7 +131,7 @@ describe('WebSocket Server', () => {
           JSON.stringify({
             type: 'subscribe',
             datasetIds: ['dataset-123'],
-          })
+          }),
         );
         client1Ready = true;
       });
@@ -131,7 +141,7 @@ describe('WebSocket Server', () => {
           JSON.stringify({
             type: 'subscribe',
             datasetIds: ['dataset-123'],
-          })
+          }),
         );
         client2Ready = true;
 
@@ -141,46 +151,50 @@ describe('WebSocket Server', () => {
             transactionEventEmitter.updateTransactionStatus(
               'tx-test-123',
               'dataset-123',
-              'pending'
+              'pending',
             );
           }
         }, 100);
       });
 
-      client2.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
-        if (
-          msg.type === 'transaction:update' &&
-          msg.data.transactionId === 'tx-test-123'
-        ) {
-          client2ReceivedUpdate = true;
-          checkDone();
+      client2.on('message', data => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'transaction:update' && msg.data.transactionId === 'tx-test-123') {
+            client2ReceivedUpdate = true;
+            checkDone();
+          }
+        } catch (err) {
+          reject(err);
         }
       });
 
-      client1.on('error', (error) => {
+      client1.on('error', error => {
         reject(error);
       });
 
-      client2.on('error', (error) => {
+      client2.on('error', error => {
         reject(error);
       });
     });
   });
 
-  it('should not broadcast to non-subscribed clients', async () => {
-    const client1 = new WebSocket(wsUrl);
-    const client2 = new WebSocket(wsUrl);
-    let client1Ready = false;
-    let client2Ready = false;
-
-    await new Promise<void>((resolve, reject) => {
+  it('should not broadcast to non-subscribed clients', () => {
+    return new Promise<void>((resolve, reject) => {
+      const client1 = new WebSocket(wsUrl);
+      const client2 = new WebSocket(wsUrl);
+      let client1Ready = false;
+      let client2Ready = false;
       const timeoutId = setTimeout(() => {
         // If no message received within timeout, test passes
-        expect(true).toBe(true);
-        client1.close();
-        client2.close();
-        resolve();
+        try {
+          expect(true).toBe(true);
+          client1.close();
+          client2.close();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
       }, 500);
 
       client1.on('open', () => {
@@ -189,7 +203,7 @@ describe('WebSocket Server', () => {
           JSON.stringify({
             type: 'subscribe',
             datasetIds: ['dataset-456'],
-          })
+          }),
         );
         client1Ready = true;
       });
@@ -200,7 +214,7 @@ describe('WebSocket Server', () => {
           JSON.stringify({
             type: 'subscribe',
             datasetIds: ['dataset-789'],
-          })
+          }),
         );
         client2Ready = true;
 
@@ -210,46 +224,51 @@ describe('WebSocket Server', () => {
             transactionEventEmitter.updateTransactionStatus(
               'tx-test-456',
               'dataset-456',
-              'completed'
+              'completed',
             );
           }
         }, 100);
       });
 
-      client2.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
-        // Should not receive the transaction:update for dataset-456
-        if (msg.type === 'transaction:update' && msg.data.datasetId === 'dataset-456') {
+      client2.on('message', data => {
+        try {
+          const msg = JSON.parse(data.toString());
+          // Should not receive the transaction:update for dataset-456
+          if (msg.type === 'transaction:update' && msg.data.datasetId === 'dataset-456') {
+            clearTimeout(timeoutId);
+            client1.close();
+            client2.close();
+            reject(new Error('Client2 should not have received dataset-456 update'));
+          }
+        } catch (err) {
           clearTimeout(timeoutId);
-          client1.close();
-          client2.close();
-          reject(new Error('Client2 should not have received dataset-456 update'));
+          reject(err);
         }
       });
 
-      client1.on('error', (error) => {
+      client1.on('error', error => {
         clearTimeout(timeoutId);
         reject(error);
       });
 
-      client2.on('error', (error) => {
+      client2.on('error', error => {
         clearTimeout(timeoutId);
         reject(error);
       });
     });
   });
 
-  it('should handle multiple event types', async () => {
-    const client = new WebSocket(wsUrl);
-    const receivedEvents: string[] = [];
+  it('should handle multiple event types', () => {
+    return new Promise<void>((resolve, reject) => {
+      const client = new WebSocket(wsUrl);
+      const receivedEvents: string[] = [];
 
-    await new Promise<void>((resolve, reject) => {
       client.on('open', () => {
         client.send(
           JSON.stringify({
             type: 'subscribe',
             datasetIds: ['dataset-multi'],
-          })
+          }),
         );
 
         setTimeout(() => {
@@ -259,82 +278,96 @@ describe('WebSocket Server', () => {
         }, 100);
       });
 
-      client.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
+      client.on('message', data => {
+        try {
+          const msg = JSON.parse(data.toString());
 
-        if (msg.type === 'payment:received') {
-          receivedEvents.push('payment:received');
-        } else if (msg.type === 'payment:forwarded') {
-          receivedEvents.push('payment:forwarded');
-        } else if (msg.type === 'dataset:queried') {
-          receivedEvents.push('dataset:queried');
-        }
+          if (msg.type === 'payment:received') {
+            receivedEvents.push('payment:received');
+          } else if (msg.type === 'payment:forwarded') {
+            receivedEvents.push('payment:forwarded');
+          } else if (msg.type === 'dataset:queried') {
+            receivedEvents.push('dataset:queried');
+          }
 
-        if (
-          receivedEvents.includes('payment:received') &&
-          receivedEvents.includes('payment:forwarded') &&
-          receivedEvents.includes('dataset:queried')
-        ) {
-          client.close();
-          resolve();
+          if (
+            receivedEvents.includes('payment:received') &&
+            receivedEvents.includes('payment:forwarded') &&
+            receivedEvents.includes('dataset:queried')
+          ) {
+            client.close();
+            resolve();
+          }
+        } catch (err) {
+          reject(err);
         }
       });
 
-      client.on('error', (error) => {
+      client.on('error', error => {
         reject(error);
       });
     });
   });
 
   it('should track connected clients', () => {
-    const client1 = new WebSocket(wsUrl);
-    const client2 = new WebSocket(wsUrl);
+    return new Promise<void>((resolve, reject) => {
+      const client1 = new WebSocket(wsUrl);
+      const client2 = new WebSocket(wsUrl);
 
-    const checkClients = () => {
-      const initialCount = wsServer.getConnectedClients();
-      expect(initialCount).toBeGreaterThanOrEqual(0);
-    };
+      client1.on('open', () => {
+        try {
+          const count = wsServer.getConnectedClients();
+          expect(count).toBeGreaterThan(0);
 
-    client1.on('open', () => {
-      const count = wsServer.getConnectedClients();
-      expect(count).toBeGreaterThan(0);
+          client2.on('open', () => {
+            try {
+              const count2 = wsServer.getConnectedClients();
+              expect(count2).toBeGreaterThanOrEqual(count);
 
-      client2.on('open', () => {
-        const count2 = wsServer.getConnectedClients();
-        expect(count2).toBeGreaterThanOrEqual(count);
-
-        client1.close();
-        client2.close();
+              client1.close();
+              client2.close();
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          });
+        } catch (err) {
+          reject(err);
+        }
       });
-    });
 
-    client1.on('error', () => {
-      /* ignore */
-    });
-    client2.on('error', () => {
-      /* ignore */
+      client1.on('error', () => {
+        /* ignore */
+      });
+      client2.on('error', () => {
+        /* ignore */
+      });
     });
   });
 
-  it('should reject invalid messages', async () => {
-    const client = new WebSocket(wsUrl);
+  it('should reject invalid messages', () => {
+    return new Promise<void>((resolve, reject) => {
+      const client = new WebSocket(wsUrl);
 
-    await new Promise<void>((resolve, reject) => {
       client.on('open', () => {
         // Send invalid JSON
         client.send('not valid json');
       });
 
-      client.on('message', (data) => {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === 'error') {
-          expect(msg.code).toBe('PARSE_ERROR');
-          client.close();
-          resolve();
+      client.on('message', data => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'error') {
+            expect(msg.code).toBe('PARSE_ERROR');
+            client.close();
+            resolve();
+          }
+        } catch (err) {
+          reject(err);
         }
       });
 
-      client.on('error', (error) => {
+      client.on('error', error => {
         reject(error);
       });
     });

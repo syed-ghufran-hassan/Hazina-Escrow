@@ -98,6 +98,11 @@ export const en = {
       imageNotSupported: "Image not supported",
     },
   },
+  websocket: {
+    connected: 'Live',
+    disconnected: 'Offline',
+    error: 'Connection Error',
+  },
   nav: {
     marketplace: 'Marketplace',
     agent: 'AI Agent',
