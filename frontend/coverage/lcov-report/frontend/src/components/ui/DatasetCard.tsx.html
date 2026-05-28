@@ -23,9 +23,9 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">9.15% </span>
+                <span class="strong">9.02% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>13/142</span>
+                <span class='fraction'>13/144</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">9.15% </span>
+                <span class="strong">9.02% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>13/142</span>
+                <span class='fraction'>13/144</span>
             </div>
         
             
@@ -205,7 +205,9 @@
 <a name='L140'></a><a href='#L140'>140</a>
 <a name='L141'></a><a href='#L141'>141</a>
 <a name='L142'></a><a href='#L142'>142</a>
-<a name='L143'></a><a href='#L143'>143</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
+<a name='L143'></a><a href='#L143'>143</a>
+<a name='L144'></a><a href='#L144'>144</a>
+<a name='L145'></a><a href='#L145'>145</a></td><td class="line-coverage quiet"><span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
@@ -218,6 +220,8 @@
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
 <span class="cline-any cline-yes">1x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
@@ -384,24 +388,26 @@ interface Props {
 <span class="cstat-no" title="statement not covered" >        )}</span>
 <span class="cstat-no" title="statement not covered" >      /&gt;</span>
 <span class="cstat-no" title="statement not covered" ></span>
-<span class="cstat-no" title="statement not covered" >      {/* Dataset Image */}</span>
-<span class="cstat-no" title="statement not covered" >      &lt;div className="relative h-40 overflow-hidden bg-void-2/50 group-hover:bg-void-2/30 transition-colors duration-500 flex items-center justify-center"&gt;</span>
-<span class="cstat-no" title="statement not covered" >        {imageError ? (</span>
-<span class="cstat-no" title="statement not covered" >          &lt;div className="flex flex-col items-center gap-2 text-muted-2"&gt;</span>
-<span class="cstat-no" title="statement not covered" >            &lt;ImageOff className="w-8 h-8 opacity-20" /&gt;</span>
-<span class="cstat-no" title="statement not covered" >            &lt;span className="text-[10px] uppercase tracking-tighter opacity-30 font-body"&gt;Image unavailable&lt;/span&gt;</span>
-<span class="cstat-no" title="statement not covered" >          &lt;/div&gt;</span>
-<span class="cstat-no" title="statement not covered" >        ) : (</span>
-<span class="cstat-no" title="statement not covered" >          &lt;&gt;</span>
-<span class="cstat-no" title="statement not covered" >            &lt;img</span>
-<span class="cstat-no" title="statement not covered" >              src={dataset.thumbnail || `https://source.unsplash.com/featured/?crypto,${dataset.type}`}</span>
-<span class="cstat-no" title="statement not covered" >              alt={dataset.name}</span>
-<span class="cstat-no" title="statement not covered" >              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-60 group-hover:opacity-80"</span>
-<span class="cstat-no" title="statement not covered" >              onError={() =&gt; setImageError(true)}</span>
-<span class="cstat-no" title="statement not covered" >            /&gt;</span>
-<span class="cstat-no" title="statement not covered" >            &lt;div className="absolute inset-0 bg-gradient-to-t from-surface via-transparent to-transparent opacity-60" /&gt;</span>
-<span class="cstat-no" title="statement not covered" >          &lt;/&gt;</span>
-<span class="cstat-no" title="statement not covered" >        )}</span>
+<span class="cstat-no" title="statement not covered" >       {/* Dataset Image */}</span>
+<span class="cstat-no" title="statement not covered" >       &lt;div className="relative h-40 overflow-hidden bg-void-2/50 group-hover:bg-void-2/30 transition-colors duration-500 flex items-center justify-center"&gt;</span>
+<span class="cstat-no" title="statement not covered" >         {imageError ? (</span>
+<span class="cstat-no" title="statement not covered" >           &lt;div className="flex flex-col items-center gap-2 text-muted-2"&gt;</span>
+<span class="cstat-no" title="statement not covered" >             &lt;ImageOff className="w-8 h-8 opacity-20" /&gt;</span>
+<span class="cstat-no" title="statement not covered" >             &lt;span className="text-[10px] uppercase tracking-tighter opacity-30 font-body"&gt;</span>
+<span class="cstat-no" title="statement not covered" >               {t("common.errors.imageNotSupported")}</span>
+<span class="cstat-no" title="statement not covered" >             &lt;/span&gt;</span>
+<span class="cstat-no" title="statement not covered" >           &lt;/div&gt;</span>
+<span class="cstat-no" title="statement not covered" >         ) : (</span>
+<span class="cstat-no" title="statement not covered" >           &lt;&gt;</span>
+<span class="cstat-no" title="statement not covered" >             &lt;img</span>
+<span class="cstat-no" title="statement not covered" >               src={dataset.thumbnail || `https://source.unsplash.com/featured/?crypto,${dataset.type}`}</span>
+<span class="cstat-no" title="statement not covered" >               alt={`${dataset.name} dataset preview`}</span>
+<span class="cstat-no" title="statement not covered" >               className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 opacity-60 group-hover:opacity-80"</span>
+<span class="cstat-no" title="statement not covered" >               onError={() =&gt; setImageError(true)}</span>
+<span class="cstat-no" title="statement not covered" >             /&gt;</span>
+<span class="cstat-no" title="statement not covered" >             &lt;div className="absolute inset-0 bg-gradient-to-t from-surface via-transparent to-transparent opacity-60" /&gt;</span>
+<span class="cstat-no" title="statement not covered" >           &lt;/&gt;</span>
+<span class="cstat-no" title="statement not covered" >         )}</span>
 <span class="cstat-no" title="statement not covered" >        </span>
 <span class="cstat-no" title="statement not covered" >        {/* Floating badge over image */}</span>
 <span class="cstat-no" title="statement not covered" >        &lt;div className="absolute top-4 left-4 z-10"&gt;</span>
@@ -496,7 +502,7 @@ interface Props {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-04-25T23:05:41.622Z
+                at 2026-05-28T09:30:33.304Z
             </div>
         <script src="../../../../prettify.js"></script>
         <script>

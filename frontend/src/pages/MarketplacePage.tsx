@@ -258,7 +258,7 @@ export default function MarketplacePage() {
                       'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-body font-medium transition-all duration-200',
                       isSelected
                         ? 'bg-gold text-void'
-                        : `${meta.bg} ${meta.color} hover:opacity-80`,
+                        : `${meta?.bg} ${meta?.color} hover:opacity-80`,
                     )}
                   >
                     {isSelected && <Check className="w-3 h-3" aria-hidden="true" />}
@@ -348,7 +348,7 @@ export default function MarketplacePage() {
               <div className="mt-10 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <button
                   type="button"
-                  onClick={() => setPage(prev => Math.max(1, prev - 1))}
+                  onClick={() => setPage(currentPage - 1)}
                   disabled={currentPage === 1}
                   aria-label={t('marketplace.pagination.previous')}
                   className={clsx(
@@ -382,7 +382,7 @@ export default function MarketplacePage() {
 
                 <button
                   type="button"
-                  onClick={() => setPage(prev => Math.min(totalPages, prev + 1))}
+                  onClick={() => setPage(currentPage + 1)}
                   disabled={currentPage === totalPages}
                   aria-label={t('marketplace.pagination.next')}
                   className={clsx(

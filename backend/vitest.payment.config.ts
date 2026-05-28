@@ -20,7 +20,7 @@ export default mergeConfig(
         include: socketTestsEnabled
           ? ['src/payments/payments.router.ts', 'src/payments/stellar.service.ts']
           : ['src/payments/stellar.service.ts'],
-        exclude: ['**/*.test.ts', '**/*.spec.ts'],
+        exclude: ['**/*.test.ts', '**/*.spec.ts', 'src/webhooks/**'],
         thresholds: {
           lines: 80,
           functions: 80,

@@ -54,6 +54,12 @@ describe("Webhook Router", () => {
   let app: Express;
 
   beforeEach(async () => {
+    // Clear mock transactions
+    const storage = await import("../common/storage") as any;
+    if (storage._clearMockTransactions) {
+      storage._clearMockTransactions();
+    }
+
     // Backup current store
     if (fs.existsSync(DATA_PATH)) {
       fs.copyFileSync(DATA_PATH, BACKUP_PATH);
