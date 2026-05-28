@@ -113,8 +113,8 @@ export async function markDeliveryFailure(params: {
   const message = error instanceof Error ? error.message : String(error);
   const existing = await getTransactionByHash(txHash);
   await updateTransactionByHash(txHash, {
-    status: 'delivery_failed',
-    deliveryStatus: 'failed',
+    status: "delivery_failed",
+    deliveryStatus: "failed",
     deliveryError: message,
     deliveryAttempts: (existing?.deliveryAttempts ?? 0) + 1,
     buyerQuery: buyerQuestion,
@@ -133,8 +133,8 @@ export async function markDeliveryFailure(params: {
     warning: 'DELIVERY_PENDING_RETRY' as const,
     transaction: {
       hash: txHash,
-      status: 'delivery_failed',
-      deliveryStatus: 'failed',
+      status: "delivery_failed",
+      deliveryStatus: "failed",
       amount: dataset.pricePerQuery,
       sellerReceived: sellerShare(dataset.pricePerQuery),
       platformFee: computePlatformFee(dataset.pricePerQuery),

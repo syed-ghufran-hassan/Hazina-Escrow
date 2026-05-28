@@ -63,9 +63,12 @@ describe('SellPage', () => {
     ['addresses with invalid characters', `G${'a'.repeat(55)}`],
   ])('shows wallet validation error for %s', (_label, wallet) => {
     renderSellPage();
-    fireEvent.change(screen.getByPlaceholderText('G... (56-character Stellar public key)'), {
+    const walletInput = screen.getByPlaceholderText('G... (56-character Stellar public key)');
+    fireEvent.change(walletInput, {
       target: { value: wallet },
     });
+    // Blur the input to trigger validation
+    fireEvent.blur(walletInput);
 
     expect(screen.getByText(walletError)).toBeTruthy();
     const submitButton = screen.getByRole('button', { name: 'Publish to Marketplace' });

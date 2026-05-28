@@ -10,7 +10,9 @@ const stellarBreaker = getCircuitBreaker('stellar-horizon', {
 });
 
 // Configurable via env; default 10 seconds as specified by the maintainer
-const STELLAR_TIMEOUT_MS = parseInt(process.env.STELLAR_TIMEOUT_MS ?? '10000', 10);
+function getStellarTimeoutMs(): number {
+  return parseInt(process.env.STELLAR_TIMEOUT_MS ?? '10000', 10);
+}
 
 interface VerifyParams {
   txHash: string;
@@ -92,7 +94,7 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
             ]),
           ),
         ),
-      STELLAR_TIMEOUT_MS,
+      getStellarTimeoutMs(),
     );
 
     const paymentOps = ops.records.filter(

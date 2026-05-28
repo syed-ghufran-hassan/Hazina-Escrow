@@ -43,6 +43,7 @@ async function seedDatasets(jsonData: Record<string, unknown>): Promise<void> {
     const existing = await db.select().from(datasets).where(eq(datasets.id, dataset.id)).limit(1);
     const existing = await db
       .select()
+      // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
       .from(datasetsTable as typeof datasets)
       .where(eq((datasetsTable as typeof datasets).id, dataset.id))
       .limit(1);
@@ -52,6 +53,7 @@ async function seedDatasets(jsonData: Record<string, unknown>): Promise<void> {
       continue;
     }
 
+    // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
     await db.insert(datasetsTable as typeof datasets).values({
       id: dataset.id,
       name: dataset.name,
@@ -76,6 +78,7 @@ async function seedTransactions(jsonData: Record<string, unknown>): Promise<void
   for (const tx of jsonData.transactions as TransactionFromJSON[]) {
     const existing = await db
       .select()
+      // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
       .from(transactionsTable as typeof transactions)
       .where(eq((transactionsTable as typeof transactions).txHash, tx.txHash))
       .limit(1);
@@ -85,6 +88,7 @@ async function seedTransactions(jsonData: Record<string, unknown>): Promise<void
       continue;
     }
 
+    // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
     await db.insert(transactionsTable as typeof transactions).values({
       id: tx.id,
       datasetId: tx.datasetId,

@@ -22,17 +22,11 @@ export interface Transaction {
   txHash: string;
   memo?: string;
   amount: number;
-  status?:
-    | 'pending'
-    | 'verifying'
-    | 'verified'
-    | 'completed'
-    | 'failed'
-    | 'refunded'
-    | 'delivery_failed';
+  status?: 'pending' | 'verifying' | 'verified' | 'completed' | 'failed' | 'refunded' | 'delivery_failed';
   deliveryStatus?: 'pending' | 'delivered' | 'failed';
   sellerPaid?: boolean;
   sellerAmount?: number;
+  sellerTxHash?: string;
   buyerQuery?: string;
   aiSummary?: string;
   deliveryAttempts?: number;
