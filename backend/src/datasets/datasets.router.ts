@@ -15,7 +15,8 @@ import { notifySeller } from '../webhooks/webhook.service';
 import { requireApiKey } from '../common/auth.middleware';
 
 const STELLAR_ADDRESS_REGEX = /^G[A-Z2-7]{55}$/;
-const MAX_DATA_BYTES = 500 * 1024;
+const MAX_DATA_KB = 500;
+const MAX_DATA_BYTES = MAX_DATA_KB * 1024;
 const makeSanitizedTextField = (fieldName: string, maxLength: number) =>
   z.string().transform(sanitizeUserText).superRefine((value, ctx) => {
     if (value.length === 0) {
@@ -60,7 +61,7 @@ const dataField = z
     if (Buffer.byteLength(JSON.stringify(parsed), 'utf8') > MAX_DATA_BYTES) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'data exceeds 500 KB limit',
+        message: `data exceeds ${MAX_DATA_KB} KB limit`,
       });
       return z.NEVER;
     }
