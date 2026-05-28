@@ -1,4 +1,24 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
+
+const STELLAR_ADDRESS_REGEX = /^G[A-Z2-7]{55}$/;
+
+export interface SellerJwtClaims {
+  sellerWallet: string;
+  sub?: string;
+  iss?: string;
+  aud?: string | string[];
+  iat?: number;
+  nbf?: number;
+  exp: number;
+  [claim: string]: unknown;
+}
+
+declare module 'express-serve-static-core' {
+  interface Request {
+    sellerAuth?: SellerJwtClaims;
+  }
+}
 
 function makeBearerMiddleware(envVar: string, label: string) {
   return function requireKey(req: Request, res: Response, next: NextFunction) {
@@ -31,3 +51,112 @@ export const requireApiKey = makeBearerMiddleware('API_KEY', 'seller');
 
 /** Protects admin-only operations (backups). */
 export const requireAdminKey = makeBearerMiddleware('ADMIN_API_KEY', 'admin');
+
+function base64UrlDecode(input: string): Buffer {
+  const normalized = input.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
+  return Buffer.from(padded, 'base64');
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+
+  return aBuffer.length === bBuffer.length && crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function hasExpectedAudience(
+  claimAud: string | string[] | undefined,
+  expectedAud: string,
+): boolean {
+  if (typeof claimAud === 'string') return claimAud === expectedAud;
+  if (isStringArray(claimAud)) return claimAud.includes(expectedAud);
+  return false;
+}
+
+function parseJsonPart(part: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(base64UrlDecode(part).toString('utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function verifySellerJwt(token: string, secret: string): SellerJwtClaims | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts.some(part => part.length === 0)) return null;
+
+  const [encodedHeader, encodedPayload, signature] = parts;
+  const header = parseJsonPart(encodedHeader);
+  const payload = parseJsonPart(encodedPayload);
+  if (!header || !payload) return null;
+  if (header.alg !== 'HS256' || header.typ !== 'JWT') return null;
+
+  const expectedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64url');
+  if (!timingSafeEqual(signature, expectedSignature)) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  const exp = payload.exp;
+  const nbf = payload.nbf;
+  const iat = payload.iat;
+  const sellerWallet = payload.sellerWallet;
+  if (typeof exp !== 'number' || !Number.isFinite(exp) || exp <= now) return null;
+  if (nbf !== undefined && (typeof nbf !== 'number' || nbf > now)) return null;
+  if (iat !== undefined && (typeof iat !== 'number' || iat > now + 60)) return null;
+  if (typeof sellerWallet !== 'string' || !STELLAR_ADDRESS_REGEX.test(sellerWallet)) return null;
+
+  const expectedIssuer = process.env.SELLER_JWT_ISSUER;
+  if (expectedIssuer && payload.iss !== expectedIssuer) return null;
+
+  const expectedAudience = process.env.SELLER_JWT_AUDIENCE;
+  const aud = payload.aud;
+  if (
+    expectedAudience &&
+    !hasExpectedAudience(
+      typeof aud === 'string' || isStringArray(aud) ? aud : undefined,
+      expectedAudience,
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    ...payload,
+    sellerWallet,
+    exp,
+    sub: typeof payload.sub === 'string' ? payload.sub : undefined,
+    iss: typeof payload.iss === 'string' ? payload.iss : undefined,
+    aud: typeof aud === 'string' || isStringArray(aud) ? aud : undefined,
+    iat: typeof iat === 'number' ? iat : undefined,
+    nbf: typeof nbf === 'number' ? nbf : undefined,
+  };
+}
+
+/** Protects seller dashboard reads with a non-optional, expiring HS256 JWT. */
+export function requireSellerJwt(req: Request, res: Response, next: NextFunction) {
+  const secret = process.env.SELLER_JWT_SECRET;
+  if (!secret) {
+    return res.status(503).json({ error: 'Server misconfigured: SELLER_JWT_SECRET is not set' });
+  }
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization header missing or not Bearer' });
+  }
+
+  const claims = verifySellerJwt(authHeader.slice(7), secret);
+  if (!claims) {
+    return res.status(401).json({ error: 'Invalid or expired seller token' });
+  }
+
+  req.sellerAuth = claims;
+  next();
+}

@@ -1,5 +1,32 @@
-const BASE = '/api';
+import { getEnv } from './env';
+
 const REQUEST_THROTTLE_MS = 250;
+
+function getMaxConcurrentRequests(): number {
+  try {
+    return getEnv().maxConcurrentRequests;
+  } catch {
+    return 8;
+  }
+}
+
+let inFlight = 0;
+const inFlightWaiters: Array<() => void> = [];
+
+async function acquireSlot(): Promise<void> {
+  if (inFlight < getMaxConcurrentRequests()) {
+    inFlight += 1;
+    return;
+  }
+  await new Promise<void>(resolve => inFlightWaiters.push(resolve));
+  inFlight += 1;
+}
+
+function releaseSlot(): void {
+  inFlight = Math.max(0, inFlight - 1);
+  const next = inFlightWaiters.shift();
+  if (next) next();
+}
 
 const requestQueues = new Map<string, Promise<void>>();
 const requestStartedAt = new Map<string, number>();
@@ -43,12 +70,20 @@ async function scheduleRequest<T>(key: string, task: () => Promise<T>): Promise<
     }
   });
 }
-const RAW_API_URL = (import.meta.env.VITE_API_URL ?? '').toString().trim();
-export const API_BASE_URL = RAW_API_URL
-  ? `${RAW_API_URL.replace(/\/+$/, '')}/api`
-  : '/api';
 
-const BASE = API_BASE_URL;
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000; // regular API calls should complete in 10-15 seconds
+export const AGENT_REQUEST_TIMEOUT_MS = 120_000; // AI/agent operations may take longer than standard requests
+
+function getApiBaseUrl(): string {
+  const { apiUrl } = getEnv();
+  return `${apiUrl}/api/v1`;
+}
+
+function getApiKey(): string {
+  return getEnv().apiKey;
+}
+
+// ── Public interfaces ──────────────────────────────────────────────────────
 
 export interface AgentSellerPayment {
   seller: string;
@@ -150,47 +185,20 @@ export interface PaginatedDatasets {
 export interface QueryResult {
   success: boolean;
   demo?: boolean;
-  data: Record<string, unknown>;
-  ai: { summary: string; answer?: string };
+  pendingDelivery?: boolean;
+  warning?: string | null;
+  data?: Record<string, unknown>;
+  ai?: { summary: string; answer?: string };
   transaction: {
     hash: string;
+    status: string;
+    deliveryStatus: 'pending' | 'delivered' | 'failed';
     amount: number;
     sellerReceived: number;
     platformFee: number;
+    deliveryError?: string;
   };
 }
-
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  return scheduleRequest(getRequestKey(url, options), async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-
-    try {
-      const res = await fetch(url, {
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        ...options,
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Network error' }));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-
-      return res.json();
-    } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
-        throw new Error('Request timed out — please try again');
-      }
-      throw err;
-    } finally {
-      clearTimeout(timeout);
-    }
-  });
-export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-export const AGENT_REQUEST_TIMEOUT_MS = 120_000;
-
-const API_KEY = (import.meta.env.VITE_API_KEY ?? '').toString().trim();
 
 interface RequestOptions extends RequestInit {
   /** Per-call override of the abort timeout, in milliseconds. */
@@ -199,7 +207,8 @@ interface RequestOptions extends RequestInit {
 
 function authHeaders(extra?: HeadersInit): HeadersInit {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (API_KEY) headers['Authorization'] = `Bearer ${API_KEY}`;
+  const apiKey = getApiKey();
+  if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
   return { ...headers, ...(extra as Record<string, string>) };
 }
 
@@ -209,8 +218,8 @@ async function fetchWithTimeout(url: string, options?: RequestOptions): Promise<
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
+      headers: authHeaders(init.headers),
       ...init,
     });
   } catch (err) {
@@ -234,19 +243,22 @@ export class ApiValidationError extends Error {
     public readonly field?: string,
   ) {
     super(message);
-    this.name = "ApiValidationError";
+    this.name = 'ApiValidationError';
   }
 }
 
 function assertString(value: unknown, field: string): asserts value is string {
-  if (typeof value !== "string") {
+  if (typeof value !== 'string') {
     throw new ApiValidationError(`Expected string for "${field}", got ${typeof value}`, field);
   }
 }
 
 function assertNumber(value: unknown, field: string): asserts value is number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new ApiValidationError(`Expected finite number for "${field}", got ${typeof value}`, field);
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new ApiValidationError(
+      `Expected finite number for "${field}", got ${typeof value}`,
+      field,
+    );
   }
 }
 
@@ -257,24 +269,24 @@ function assertArray(value: unknown, field: string): asserts value is unknown[] 
 }
 
 function assertObject(value: unknown, field: string): asserts value is Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ApiValidationError(`Expected object for "${field}", got ${typeof value}`, field);
   }
 }
 
 /** Validate a Stats object from the API. */
 function validateStats(raw: unknown): Stats {
-  assertObject(raw, "stats");
-  assertNumber(raw.totalDatasets, "stats.totalDatasets");
-  assertNumber(raw.totalQueries, "stats.totalQueries");
-  assertNumber(raw.totalUsdcEarned, "stats.totalUsdcEarned");
-  assertNumber(raw.totalTransactions, "stats.totalTransactions");
+  assertObject(raw, 'stats');
+  assertNumber(raw.totalDatasets, 'stats.totalDatasets');
+  assertNumber(raw.totalQueries, 'stats.totalQueries');
+  assertNumber(raw.totalUsdcEarned, 'stats.totalUsdcEarned');
+  assertNumber(raw.totalTransactions, 'stats.totalTransactions');
   return raw as unknown as Stats;
 }
 
 /** Validate a DatasetMeta object from the API. */
 function validateDataset(raw: unknown, index?: number): DatasetMeta {
-  const label = index !== undefined ? `dataset[${index}]` : "dataset";
+  const label = index !== undefined ? `dataset[${index}]` : 'dataset';
   assertObject(raw, label);
   assertString(raw.id, `${label}.id`);
   assertString(raw.name, `${label}.name`);
@@ -287,12 +299,32 @@ function validateDataset(raw: unknown, index?: number): DatasetMeta {
 // ── HTTP helper ────────────────────────────────────────────────────────────
 
 async function request<T>(url: string, options?: RequestOptions): Promise<T> {
-  const res = await fetchWithTimeout(url, options);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Network error' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  return res.json();
+  return scheduleRequest(getRequestKey(url, options), async () => {
+    await acquireSlot();
+    try {
+      const res = await fetchWithTimeout(url, options);
+
+      // Parse JSON body once. If parsing fails, we fallback to null.
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        throw new Error(data?.error || `HTTP ${res.status}`);
+      }
+
+      if (data === null) {
+        throw new Error('Invalid response from server');
+      }
+
+      // Handle business-level failures returned with 2xx status codes
+      if (data && typeof data === 'object' && data.success === false) {
+        throw new Error(data.error || 'API request failed');
+      }
+
+      return data as T;
+    } finally {
+      releaseSlot();
+    }
+  });
 }
 
 export const api = {
@@ -300,7 +332,11 @@ export const api = {
     page?: number;
     limit?: number;
     search?: string;
-    type?: string;
+    type?: string | string[];
+    types?: string[];
+    minPrice?: number;
+    maxPrice?: number;
+    minQueries?: number;
     sort?: string;
   }) => {
     const searchParams = new URLSearchParams();
@@ -308,33 +344,44 @@ export const api = {
       if (params.page) searchParams.append('page', params.page.toString());
       if (params.limit) searchParams.append('limit', params.limit.toString());
       if (params.search) searchParams.append('search', params.search);
-      if (params.type) searchParams.append('type', params.type);
+      const typeValues = [
+        ...(Array.isArray(params.type) ? params.type : params.type ? [params.type] : []),
+        ...(params.types ?? []),
+      ];
+      typeValues.forEach(type => {
+        if (type) searchParams.append('type', type);
+      });
+      if (params.minPrice !== undefined)
+        searchParams.append('minPrice', params.minPrice.toString());
+      if (params.maxPrice !== undefined)
+        searchParams.append('maxPrice', params.maxPrice.toString());
+      if (params.minQueries !== undefined)
+        searchParams.append('minQueries', params.minQueries.toString());
       if (params.sort) searchParams.append('sort', params.sort);
     }
     const query = searchParams.toString();
-    const url = `${BASE}/datasets${query ? `?${query}` : ''}`;
-    return request<PaginatedDatasets>(url).then((r) => {
-      // Validate individual dataset items to catch malformed API responses.
-      assertArray(r.data, "datasets.data");
+    const url = `${getApiBaseUrl()}/datasets${query ? `?${query}` : ''}`;
+    return request<PaginatedDatasets>(url).then(r => {
+      assertArray(r.data, 'datasets.data');
       r.data = r.data.map((item, i) => validateDataset(item, i));
       return r;
     });
   },
 
   getStats: () =>
-    request<{ success: boolean; stats: unknown }>(`${BASE}/datasets/stats`).then((r) =>
+    request<{ success: boolean; stats: unknown }>(`${getApiBaseUrl()}/datasets/stats`).then(r =>
       validateStats(r.stats),
     ),
 
   getDataset: (id: string) =>
-    request<{ success: boolean; dataset: DatasetMeta }>(`${BASE}/datasets/${id}`).then(
+    request<{ success: boolean; dataset: DatasetMeta }>(`${getApiBaseUrl()}/datasets/${id}`).then(
       r => r.dataset,
     ),
 
   getTransactions: (datasetId?: string) => {
     const url = datasetId
-      ? `${BASE}/datasets/${datasetId}/transactions`
-      : `${BASE}/datasets/transactions`;
+      ? `${getApiBaseUrl()}/datasets/${datasetId}/transactions`
+      : `${getApiBaseUrl()}/datasets/transactions`;
     return request<{ success: boolean; transactions: Transaction[] }>(url).then(
       r => r.transactions,
     );
@@ -342,34 +389,33 @@ export const api = {
 
   initiateQuery: (id: string) =>
     request<{ payment: { paymentAddress: string; amount: number; memo: string } }>(
-      `${BASE}/query/${id}`,
+      `${getApiBaseUrl()}/query/${id}`,
       { method: 'POST' },
     ),
-    fetchWithTimeout(`${BASE}/query/${id}`, { method: 'POST' }).then((r) => r.json()),
 
   verifyPayment: (id: string, txHash: string, buyerQuestion?: string) =>
-    request<QueryResult>(`${BASE}/verify/${id}`, {
+    request<QueryResult>(`${getApiBaseUrl()}/verify/${id}`, {
       method: 'POST',
       body: JSON.stringify({ txHash, buyerQuestion }),
     }),
 
   demoQuery: (id: string, buyerQuestion?: string) =>
-    request<QueryResult>(`${BASE}/verify/${id}/demo`, {
+    request<QueryResult>(`${getApiBaseUrl()}/verify/${id}/demo`, {
       method: 'POST',
       body: JSON.stringify({ buyerQuestion }),
     }),
 
-  agentInfo: () => request<AgentInfo>(`${BASE}/agent/info`),
+  agentInfo: () => request<AgentInfo>(`${getApiBaseUrl()}/agent/info`),
 
   agentDemo: (query: string) =>
-    request<AgentJob>(`${BASE}/agent/research/demo`, {
+    request<AgentJob>(`${getApiBaseUrl()}/agent/research/demo`, {
       method: 'POST',
       body: JSON.stringify({ query }),
       timeoutMs: AGENT_REQUEST_TIMEOUT_MS,
     }),
 
   agentResearch: (query: string, txHash: string) =>
-    request<AgentJob>(`${BASE}/agent/research`, {
+    request<AgentJob>(`${getApiBaseUrl()}/agent/research`, {
       method: 'POST',
       body: JSON.stringify({ query, txHash }),
       timeoutMs: AGENT_REQUEST_TIMEOUT_MS,
@@ -383,7 +429,7 @@ export const api = {
     sellerWallet: string;
     data: unknown;
   }) =>
-    request<{ success: boolean; dataset: DatasetMeta }>(`${BASE}/datasets`, {
+    request<{ success: boolean; dataset: DatasetMeta }>(`${getApiBaseUrl()}/datasets`, {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify(payload),
@@ -393,4 +439,6 @@ export const api = {
 export function __resetRequestThrottleForTests() {
   requestQueues.clear();
   requestStartedAt.clear();
+  inFlight = 0;
+  inFlightWaiters.length = 0;
 }

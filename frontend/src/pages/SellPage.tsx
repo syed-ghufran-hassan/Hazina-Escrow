@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Upload,
@@ -39,16 +39,67 @@ const INITIAL: FormState = {
   dataText: "",
 };
 
+const STORAGE_KEY = "hazina_sell_form_draft";
+
+function loadDraft(): FormState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return INITIAL;
+    return { ...INITIAL, ...(JSON.parse(raw) as Partial<FormState>) };
+  } catch {
+    return INITIAL;
+  }
+}
+
+function saveDraft(form: FormState): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(form));
+  } catch {
+    // localStorage may be unavailable in certain browser contexts
+  }
+}
+
+function clearDraft(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export default function SellPage() {
   const { locale, t } = useI18n();
   const catalog = getCatalog(locale);
   const navigate = useNavigate();
-  const [form, setForm] = useState<FormState>(INITIAL);
+  const [form, setForm] = useState<FormState>(loadDraft);
   const [tab, setTab] = useState<Tab>("form");
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
+  const [showConfirm, setShowConfirm] = useState(false);
   const [jsonError, setJsonError] = useState("");
+  const [walletTouched, setWalletTouched] = useState(false);
+  const confirmBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (showConfirm) {
+      confirmBtnRef.current?.focus();
+    }
+  }, [showConfirm]);
+
+  useEffect(() => {
+    if (!showConfirm) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setShowConfirm(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showConfirm]);
+
+  // Persist form draft across page reloads
+  useEffect(() => {
+    saveDraft(form);
+  }, [form]);
 
   const set =
     (key: keyof FormState) =>
@@ -97,8 +148,12 @@ export default function SellPage() {
     reader.readAsText(file);
   };
 
-  const isValidStellarAddress = (addr: string): boolean =>
-    /^G[A-Z2-7]{55}$/.test(addr.trim());
+  const isValidStellarAddress = (addr: string): boolean => {
+    const trimmed = addr.trim();
+    return trimmed.length === 56 && trimmed.startsWith("G") && /^[A-Z2-7]{56}$/.test(trimmed);
+  };
+
+  const isWalletInvalid = walletTouched && !isValidStellarAddress(form.sellerWallet);
 
   const isValid =
     form.name.trim() &&
@@ -109,7 +164,8 @@ export default function SellPage() {
     form.dataText.trim() &&
     !jsonError;
 
-  const handleSubmit = async () => {
+  const handleSubmitConfirmed = async () => {
+    setShowConfirm(false);
     if (!isValid || !validateJson(form.dataText)) return;
     setSubmitting(true);
     setError("");
@@ -122,6 +178,7 @@ export default function SellPage() {
         sellerWallet: form.sellerWallet.trim(),
         data: JSON.parse(form.dataText),
       });
+      clearDraft();
       setSuccess(true);
     } catch (err: unknown) {
       setError(
@@ -153,6 +210,7 @@ export default function SellPage() {
           <div className="flex gap-3 justify-center">
             <button
               onClick={() => {
+                clearDraft();
                 setForm(INITIAL);
                 setSuccess(false);
               }}
@@ -316,15 +374,16 @@ export default function SellPage() {
                     type="text"
                     value={form.sellerWallet}
                     onChange={set("sellerWallet")}
+                    onBlur={() => setWalletTouched(true)}
                     placeholder={t("sell.form.sellerWalletPlaceholder")}
                     className={clsx(
                       "w-full bg-void/60 border rounded-xl px-4 py-3 text-sm font-mono text-foreground placeholder:text-muted focus:outline-none transition-colors",
-                      form.sellerWallet && !isValidStellarAddress(form.sellerWallet)
+                      isWalletInvalid
                         ? "border-red-500/50 focus:border-red-500/70"
                         : "border-border/60 focus:border-gold/50",
                     )}
                   />
-                  {form.sellerWallet && !isValidStellarAddress(form.sellerWallet) && (
+                  {isWalletInvalid && (
                     <p className="text-xs text-red-400 mt-1 font-body">
                       {t("sell.form.sellerWalletError")}
                     </p>
@@ -356,7 +415,7 @@ export default function SellPage() {
                     </div>
                     <input
                       type="file"
-                      accept=".json,.csv"
+                      accept=".json,application/json"
                       className="hidden"
                       onChange={handleFileUpload}
                     />
@@ -399,7 +458,7 @@ export default function SellPage() {
                 )}
 
                 <button
-                  onClick={handleSubmit}
+                  onClick={() => setShowConfirm(true)}
                   disabled={!isValid || submitting}
                   className={clsx(
                     "btn-gold w-full flex items-center justify-center gap-2 py-4 text-base",
@@ -418,6 +477,56 @@ export default function SellPage() {
                     </>
                   )}
                 </button>
+
+                {/* Confirmation dialog */}
+                {showConfirm && (
+                  <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                      className="absolute inset-0 bg-void/80 backdrop-blur-sm"
+                      onClick={() => setShowConfirm(false)}
+                      aria-hidden="true"
+                    />
+                    <div
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="confirm-title"
+                      className="relative w-full max-w-sm glass-card-gold p-6 rounded-2xl"
+                    >
+                      <h3
+                        id="confirm-title"
+                        className="font-display font-bold text-lg text-foreground mb-2"
+                      >
+                        Publish dataset?
+                      </h3>
+                      <p className="text-sm text-foreground-muted font-body mb-6">
+                        You are about to list{" "}
+                        <span className="text-foreground font-medium">
+                          {form.name}
+                        </span>{" "}
+                        at{" "}
+                        <span className="text-gold font-semibold">
+                          ${formatUSDC(Number(form.pricePerQuery), locale)} USDC
+                        </span>{" "}
+                        per query. This action cannot be undone.
+                      </p>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => setShowConfirm(false)}
+                          className="btn-ghost flex-1 py-2.5 text-sm"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          ref={confirmBtnRef}
+                          onClick={handleSubmitConfirmed}
+                          className="btn-gold flex-1 py-2.5 text-sm"
+                        >
+                          Publish
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               /* Preview tab */
@@ -485,7 +594,7 @@ export default function SellPage() {
                 { queries: 1000, label: t("sell.earnings.thousandQueries") },
               ].map(({ queries, label }) => {
                 const price = parseFloat(form.pricePerQuery) || 0;
-                const earned = (price * queries * 0.95).toFixed(2);
+                const earned = price * queries * 0.95;
                 return (
                   <div
                     key={queries}
@@ -495,7 +604,7 @@ export default function SellPage() {
                       {label}
                     </span>
                     <span className="font-body font-semibold text-gold text-sm">
-                      ${formatUSDC(Number(earned), locale)}
+                      ${formatUSDC(earned, locale)}
                     </span>
                   </div>
                 );

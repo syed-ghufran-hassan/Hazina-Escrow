@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockCreate = vi.fn();
 
@@ -42,8 +42,20 @@ describe('parseClaudeSummaryResponse', () => {
 });
 
 describe('generateDataSummary', () => {
+  const originalAnthropicModel = process.env.ANTHROPIC_MODEL;
+
   beforeEach(() => {
     mockCreate.mockReset();
+    delete process.env.ANTHROPIC_MODEL;
+  });
+
+  afterEach(() => {
+    if (originalAnthropicModel === undefined) {
+      delete process.env.ANTHROPIC_MODEL;
+      return;
+    }
+
+    process.env.ANTHROPIC_MODEL = originalAnthropicModel;
   });
 
   it('parses fenced output returned by Claude', async () => {
@@ -59,5 +71,72 @@ describe('generateDataSummary', () => {
     const result = await generateDataSummary({ rows: [1, 2, 3] }, 'What changed?');
     expect(result.summary).toBe('Summary line one.');
     expect(result.answer).toBe('A concise answer.');
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'claude-3-5-haiku-20241022' }),
+    );
+  });
+
+  it('uses ANTHROPIC_MODEL when configured', async () => {
+    process.env.ANTHROPIC_MODEL = 'claude-custom-summary-model';
+    mockCreate.mockResolvedValue({
+      content: [{ type: 'text', text: 'Summary only.' }],
+    });
+
+    await generateDataSummary({ rows: [1] });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'claude-custom-summary-model' }),
+    );
+  });
+});
+
+// ── Timeout tests ──────────────────────────────────────────────────────────
+describe('generateDataSummary timeout handling', () => {
+  const originalTimeout = process.env.ANTHROPIC_TIMEOUT_MS;
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+    delete process.env.ANTHROPIC_TIMEOUT_MS;
+  });
+
+  afterEach(() => {
+    if (originalTimeout === undefined) delete process.env.ANTHROPIC_TIMEOUT_MS;
+    else process.env.ANTHROPIC_TIMEOUT_MS = originalTimeout;
+  });
+
+  it('throws AnthropicTimeoutError when SDK raises APITimeoutError', async () => {
+    // Simulate the Anthropic SDK throwing its own APITimeoutError
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    const timeoutErr = new Anthropic.APITimeoutError({
+      url: '/messages',
+      timeout: 60000,
+      headers: undefined,
+      error: undefined,
+    });
+    mockCreate.mockRejectedValue(timeoutErr);
+
+    const { AnthropicTimeoutError } = await import('./claude.service');
+
+    await expect(generateDataSummary({ rows: [1, 2, 3] })).rejects.toBeInstanceOf(
+      AnthropicTimeoutError,
+    );
+  });
+
+  it('AnthropicTimeoutError message is user-friendly', async () => {
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    const timeoutErr = new Anthropic.APITimeoutError({
+      url: '/messages',
+      timeout: 60000,
+      headers: undefined,
+      error: undefined,
+    });
+    mockCreate.mockRejectedValue(timeoutErr);
+
+    const { AnthropicTimeoutError } = await import('./claude.service');
+
+    const err = await generateDataSummary({ rows: [] }).catch(e => e);
+    expect(err).toBeInstanceOf(AnthropicTimeoutError);
+    expect(err.message).not.toContain('AbortError');
+    expect(err.message).toMatch(/AI assistant did not respond/i);
   });
 });

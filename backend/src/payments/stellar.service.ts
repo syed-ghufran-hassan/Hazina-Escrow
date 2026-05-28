@@ -1,12 +1,16 @@
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { getCircuitBreaker } from '../common/circuit-breaker';
+import { HORIZON_URL, USDC_ISSUER } from '../lib/stellar.config';
 
-const server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
+const server = new StellarSdk.Horizon.Server(HORIZON_URL);
 
 const stellarBreaker = getCircuitBreaker('stellar-horizon', {
   failureThreshold: 5,
   resetTimeoutMs: 60_000, // 60 s
 });
+
+// Configurable via env; default 10 seconds as specified by the maintainer
+const STELLAR_TIMEOUT_MS = parseInt(process.env.STELLAR_TIMEOUT_MS ?? '10000', 10);
 
 interface VerifyParams {
   txHash: string;
@@ -21,16 +25,53 @@ interface VerifyResult {
   memo?: string;
 }
 
+/**
+ * Runs `fn` with a hard deadline of `timeoutMs` milliseconds.
+ * Throws a user-friendly StellarTimeoutError if the deadline is exceeded.
+ */
+async function withStellarTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () => {
+          reject(new StellarTimeoutError(timeoutMs));
+        });
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export class StellarTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(
+      `Stellar Horizon did not respond within ${timeoutMs / 1000} seconds. ` +
+        'The payment network may be congested — please try again shortly.',
+    );
+    this.name = 'StellarTimeoutError';
+  }
+}
+
 export async function verifyStellarPayment(params: VerifyParams): Promise<VerifyResult> {
   const { txHash, expectedAmount, destinationAddress } = params;
 
   try {
-    const [tx, ops] = await stellarBreaker.execute(() =>
-      Promise.all([
-        server.transactions().transaction(txHash).call(),
-        server.operations().forTransaction(txHash).call(),
-      ]),
+    const [tx, ops] = await withStellarTimeout(
+      () =>
+        stellarBreaker.execute(() =>
+          Promise.all([
+            server.transactions().transaction(txHash).call(),
+            server.operations().forTransaction(txHash).call(),
+          ]),
+        ),
+      STELLAR_TIMEOUT_MS,
     );
+
     const paymentOps = ops.records.filter(
       op =>
         op.type === 'payment' &&
@@ -42,12 +83,9 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     }
 
     // Find USDC payment — must match both asset code and issuer to prevent XLM/fake-USDC substitution
-    const expectedIssuer = process.env.USDC_ISSUER;
     const usdcOps = paymentOps.filter(op => {
       const payOp = op as StellarSdk.Horizon.ServerApi.PaymentOperationRecord;
-      return (
-        payOp.asset_code === 'USDC' && (!expectedIssuer || payOp.asset_issuer === expectedIssuer)
-      );
+      return payOp.asset_code === 'USDC' && payOp.asset_issuer === USDC_ISSUER;
     });
 
     if (usdcOps.length === 0) {
@@ -82,6 +120,9 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
       memo: tx.memo || '',
     };
   } catch (err: unknown) {
+    if (err instanceof StellarTimeoutError) {
+      throw err; // propagate the user-friendly timeout error as-is
+    }
     if (err && typeof err === 'object' && 'response' in err) {
       const httpErr = err as { response?: { status?: number } };
       if (httpErr.response?.status === 404) {

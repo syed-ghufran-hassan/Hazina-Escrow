@@ -1,4 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { getAnthropicResearchModel } from './anthropic.config';
+import { AnthropicTimeoutError } from './claude.service';
+
+// Configurable via env; default 60 seconds (shared with claude.service)
+const ANTHROPIC_TIMEOUT_MS = parseInt(process.env.ANTHROPIC_TIMEOUT_MS ?? '60000', 10);
 
 export interface ResearchInput {
   userQuery: string;
@@ -27,8 +32,43 @@ export interface ResearchReport {
   rawAnalysis: string;
 }
 
+/**
+ * Safely parse JSON from Claude response, handling markdown fences and prose.
+ * Returns null if parsing fails after all attempts.
+ */
+function tryParseJson(raw: string): ResearchReport | null {
+  // Attempt #1: Remove markdown fences and parse
+  const cleaned = raw
+    .replace(/^```json\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+
+  try {
+    return JSON.parse(cleaned) as ResearchReport;
+  } catch {
+    // Attempt #2: Extract first valid-looking JSON object
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        return JSON.parse(jsonMatch[0]) as ResearchReport;
+      } catch {
+        // Both attempts failed
+        return null;
+      }
+    }
+
+    // No JSON object found
+    return null;
+  }
+}
+
 export async function synthesizeResearch(input: ResearchInput): Promise<ResearchReport> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  // `timeout` (ms) is applied to every request made by this client instance.
+  // The SDK throws APITimeoutError when the deadline is exceeded.
+  const client = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    timeout: ANTHROPIC_TIMEOUT_MS,
+  });
   const prompt = `You are the Hazina Research Agent — an autonomous DeFi yield researcher. You have just purchased data from four specialised on-chain data sellers using micro-payments on Stellar. Synthesise all four datasets into a single, actionable research report for the user.
 
 USER QUERY: "${input.userQuery}"
@@ -75,25 +115,57 @@ Respond ONLY with valid JSON in this exact shape (no markdown fences):
   "rawAnalysis": "Concise paragraph synthesising all four data sources"
 }`;
 
-  const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 2048,
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  const raw = response.content
-    .filter((b) => b.type === 'text')
-    .map((b) => (b as { type: 'text'; text: string }).text)
-    .join('');
-
-  // Strip any accidental markdown fences
-  const cleaned = raw.replace(/^```json\s*/i, '').replace(/```\s*$/i, '').trim();
-
   try {
-    const parsed = JSON.parse(cleaned) as ResearchReport;
-    return parsed;
-  } catch {
-    throw new Error(`AI returned invalid JSON. Raw response: ${cleaned.slice(0, 200)}`);
+    // First attempt
+    const response = await client.messages.create({
+      model: getAnthropicResearchModel(),
+      max_tokens: 2048,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const raw = response.content
+      .filter(b => b.type === 'text')
+      .map(b => (b as { type: 'text'; text: string }).text)
+      .join('');
+
+    // Try to parse the initial response
+    let parsed = tryParseJson(raw);
+    if (parsed !== null) {
+      return parsed;
+    }
+
+    // Retry with stricter prompt
+    console.warn('[synthesizeResearch] Initial parse failed, retrying with stricter prompt');
+
+    const stricterPrompt = `${prompt}
+
+CRITICAL: Return ONLY valid JSON. Do not include explanations, markdown, code fences, or any extra text. Just the JSON object.`;
+
+    const retryResponse = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 2048,
+      messages: [{ role: 'user', content: stricterPrompt }],
+    });
+
+    const retryRaw = retryResponse.content
+      .filter(b => b.type === 'text')
+      .map(b => (b as { type: 'text'; text: string }).text)
+      .join('');
+
+    parsed = tryParseJson(retryRaw);
+    if (parsed !== null) {
+      return parsed;
+    }
+
+    // Both attempts failed
+    throw new Error(
+      `Failed to parse Claude JSON response after retry. Raw output: ${raw.slice(0, 500)}`,
+    );
+  } catch (err: unknown) {
+    if (err instanceof Anthropic.APITimeoutError) {
+      throw new AnthropicTimeoutError(ANTHROPIC_TIMEOUT_MS);
+    }
+    throw err;
   }
 }
 

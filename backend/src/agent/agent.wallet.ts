@@ -1,9 +1,8 @@
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { HORIZON_URL, SOROBAN_RPC_URL, USDC_ISSUER, getNetworkPassphrase } from '../lib/stellar.config';
 
-const server = new StellarSdk.Horizon.Server('https://horizon-testnet.stellar.org');
-
-// Testnet USDC issuer (Circle testnet)
-const USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+const server = new StellarSdk.Horizon.Server(HORIZON_URL);
+const CONTRACT_CALL_TIMEOUT_MS = 30_000;
 
 export interface SendPaymentParams {
   destinationAddress: string;
@@ -35,7 +34,7 @@ export async function sendUsdcPayment(params: SendPaymentParams): Promise<SendPa
 
   const txBuilder = new StellarSdk.TransactionBuilder(account, {
     fee: StellarSdk.BASE_FEE,
-    networkPassphrase: StellarSdk.Networks.TESTNET,
+    networkPassphrase: getNetworkPassphrase(),
   }).addOperation(
     StellarSdk.Operation.payment({
       destination: params.destinationAddress,
@@ -58,6 +57,58 @@ export async function sendUsdcPayment(params: SendPaymentParams): Promise<SendPa
     to: params.destinationAddress,
     amount: params.amount,
   };
+}
+
+/**
+ * Invokes a Soroban contract function as admin (AGENT_WALLET_SECRET).
+ * Simulates, assembles auth, signs, submits, and polls for confirmation.
+ * Returns the confirmed transaction hash.
+ */
+export async function callContract(
+  contractId: string,
+  method: string,
+  args: StellarSdk.xdr.ScVal[],
+): Promise<string> {
+  const secret = process.env.AGENT_WALLET_SECRET;
+  if (!secret) throw new Error('AGENT_WALLET_SECRET not configured');
+
+  const keypair = StellarSdk.Keypair.fromSecret(secret);
+  const rpc = new StellarSdk.rpc.Server(SOROBAN_RPC_URL);
+  const contract = new StellarSdk.Contract(contractId);
+
+  const account = await rpc.getAccount(keypair.publicKey());
+  const tx = new StellarSdk.TransactionBuilder(account, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase: getNetworkPassphrase(),
+  })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
+    .build();
+
+  const simResult = await rpc.simulateTransaction(tx);
+  if (!StellarSdk.rpc.Api.isSimulationSuccess(simResult)) {
+    throw new Error(`Contract simulation failed for ${method}: ${JSON.stringify(simResult)}`);
+  }
+
+  const assembled = StellarSdk.rpc.assembleTransaction(tx, simResult).build();
+  assembled.sign(keypair);
+
+  const sendResult = await rpc.sendTransaction(assembled);
+  if (sendResult.status === 'ERROR') {
+    throw new Error(`Contract submit error for ${method}: ${JSON.stringify(sendResult.errorResult)}`);
+  }
+
+  const txHash = sendResult.hash;
+  const deadline = Date.now() + CONTRACT_CALL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const txResult = await rpc.getTransaction(txHash);
+    if (txResult.status === StellarSdk.rpc.Api.GetTransactionStatus.SUCCESS) return txHash;
+    if (txResult.status === StellarSdk.rpc.Api.GetTransactionStatus.FAILED) {
+      throw new Error(`Contract call ${method} failed on-chain`);
+    }
+    await new Promise(r => setTimeout(r, 1_000));
+  }
+  throw new Error(`Contract call ${method} timed out after ${CONTRACT_CALL_TIMEOUT_MS}ms`);
 }
 
 export function getAgentPublicKey(): string | null {

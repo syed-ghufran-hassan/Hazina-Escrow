@@ -20,11 +20,13 @@ This directory contains Terraform scripts to deploy the Hazina Escrow project on
 ## Deployment
 
 1. **Initialize Terraform**:
+
    ```bash
    terraform init
    ```
 
 2. **Create a `terraform.tfvars` file**:
+
    ```hcl
    aws_region          = "us-east-1"
    project_name        = "hazina-escrow"
@@ -33,9 +35,11 @@ This directory contains Terraform scripts to deploy the Hazina Escrow project on
    escrow_wallet       = "G..."
    agent_wallet_secret = "S..."
    escrow_contract_id  = "C..."
+   cors_allowed_origins = "https://app.example.com,https://admin.example.com"
    ```
 
 3. **Plan the deployment**:
+
    ```bash
    terraform plan
    ```
@@ -71,6 +75,7 @@ This directory contains Terraform scripts to deploy the Hazina Escrow project on
 ## Clean Up
 
 To destroy the infrastructure:
+
 ```bash
 terraform destroy
 ```

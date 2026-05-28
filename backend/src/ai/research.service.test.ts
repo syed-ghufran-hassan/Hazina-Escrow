@@ -1,5 +1,20 @@
-import { describe, expect, it } from 'vitest';
-import { parseBudget, parseRiskTolerance } from './research.service';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockCreate = vi.fn();
+
+vi.mock('@anthropic-ai/sdk', () => ({
+  default: vi.fn().mockImplementation(() => ({
+    messages: {
+      create: mockCreate,
+    },
+  })),
+}));
+
+import {
+  parseBudget,
+  parseRiskTolerance,
+  synthesizeResearch,
+} from './research.service';
 
 describe('parseRiskTolerance', () => {
   it('returns low for low-risk synonyms', () => {
@@ -28,5 +43,113 @@ describe('parseBudget', () => {
 
   it('falls back to default when no budget is found', () => {
     expect(parseBudget('Find safe stablecoin pools')).toBe(500);
+  });
+});
+
+describe('synthesizeResearch', () => {
+  const originalAnthropicModel = process.env.ANTHROPIC_MODEL;
+  const originalAnthropicResearchModel = process.env.ANTHROPIC_RESEARCH_MODEL;
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+    delete process.env.ANTHROPIC_MODEL;
+    delete process.env.ANTHROPIC_RESEARCH_MODEL;
+  });
+
+  afterEach(() => {
+    if (originalAnthropicModel === undefined) {
+      delete process.env.ANTHROPIC_MODEL;
+    } else {
+      process.env.ANTHROPIC_MODEL = originalAnthropicModel;
+    }
+
+    if (originalAnthropicResearchModel === undefined) {
+      delete process.env.ANTHROPIC_RESEARCH_MODEL;
+    } else {
+      process.env.ANTHROPIC_RESEARCH_MODEL = originalAnthropicResearchModel;
+    }
+  });
+
+  it('uses ANTHROPIC_RESEARCH_MODEL when configured', async () => {
+    process.env.ANTHROPIC_RESEARCH_MODEL = 'claude-custom-research-model';
+    mockCreate.mockResolvedValue({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            topOpportunity: {
+              protocol: 'Aave',
+              vault: 'USDC Core',
+              chain: 'Ethereum',
+              apy: 7.2,
+              riskLevel: 'Low',
+              whaleConfidence: 'High',
+              sentimentScore: 'Bullish',
+            },
+            reasoning: 'Best fit.',
+            alternatives: ['Alt 1', 'Alt 2'],
+            warnings: [],
+            rawAnalysis: 'Synthesis.',
+          }),
+        },
+      ],
+    });
+
+    const result = await synthesizeResearch({
+      userQuery: 'Find a safe USDC vault',
+      budget: 500,
+      riskTolerance: 'low',
+      yieldData: {},
+      whaleData: {},
+      riskData: {},
+      sentimentData: {},
+      datasetCosts: {},
+    });
+
+    expect(result.topOpportunity.protocol).toBe('Aave');
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'claude-custom-research-model' }),
+    );
+  });
+
+  it('falls back to ANTHROPIC_MODEL when research override is unset', async () => {
+    process.env.ANTHROPIC_MODEL = 'claude-shared-model';
+    mockCreate.mockResolvedValue({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            topOpportunity: {
+              protocol: 'Compound',
+              vault: 'USDC Vault',
+              chain: 'Base',
+              apy: 6.1,
+              riskLevel: 'Medium',
+              whaleConfidence: 'Neutral',
+              sentimentScore: 'Neutral',
+            },
+            reasoning: 'Shared fallback.',
+            alternatives: [],
+            warnings: [],
+            rawAnalysis: 'Fallback.',
+          }),
+        },
+      ],
+    });
+
+    await synthesizeResearch({
+      userQuery: 'Find a balanced USDC vault',
+      budget: 500,
+      riskTolerance: 'medium',
+      yieldData: {},
+      whaleData: {},
+      riskData: {},
+      sentimentData: {},
+      datasetCosts: {},
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'claude-shared-model' }),
+    );
   });
 });

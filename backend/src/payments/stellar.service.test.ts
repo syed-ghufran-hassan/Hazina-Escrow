@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const TESTNET_USDC_ISSUER = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
 const {
   mockTransactionCall,
   mockOperationCall,
@@ -38,7 +40,7 @@ vi.mock('@stellar/stellar-sdk', () => {
   };
 });
 
-import { verifyStellarPayment } from './stellar.service';
+import { verifyStellarPayment, StellarTimeoutError } from './stellar.service';
 
 const destinationAddress = `G${'A'.repeat(55)}`;
 
@@ -50,6 +52,8 @@ describe('verifyStellarPayment', () => {
     mockTransactions.mockClear();
     mockForTransaction.mockClear();
     mockOperations.mockClear();
+    // Reset the timeout env var before each test
+    delete process.env.STELLAR_TIMEOUT_MS;
   });
 
   it('returns valid for matching recent USDC payment', async () => {
@@ -63,6 +67,7 @@ describe('verifyStellarPayment', () => {
           type: 'payment',
           to: destinationAddress,
           asset_code: 'USDC',
+          asset_issuer: TESTNET_USDC_ISSUER,
           amount: '1.0000',
         },
       ],
@@ -91,6 +96,7 @@ describe('verifyStellarPayment', () => {
           type: 'payment',
           to: destinationAddress,
           asset_code: 'USDC',
+          asset_issuer: TESTNET_USDC_ISSUER,
           amount: '1.0000',
         },
       ],
@@ -117,6 +123,7 @@ describe('verifyStellarPayment', () => {
           type: 'payment',
           to: destinationAddress,
           asset_code: 'USDC',
+          asset_issuer: TESTNET_USDC_ISSUER,
           amount: '0.7000',
         },
       ],
@@ -185,4 +192,58 @@ describe('verifyStellarPayment', () => {
       }),
     ).rejects.toThrow('network unavailable');
   });
+
+  // ── Timeout tests ──────────────────────────────────────────────────────────
+
+  it('throws StellarTimeoutError when Horizon is slow (default 10 s, mocked to 50 ms)', async () => {
+    // Override the env timeout to 50 ms so the test is fast
+    process.env.STELLAR_TIMEOUT_MS = '50';
+
+    // Simulate a Horizon call that never resolves within the deadline
+    mockTransactionCall.mockImplementation(
+      () => new Promise(resolve => setTimeout(resolve, 5_000)),
+    );
+
+    await expect(
+      verifyStellarPayment({
+        txHash: 'tx-slow',
+        expectedAmount: 1,
+        destinationAddress,
+      }),
+    ).rejects.toBeInstanceOf(StellarTimeoutError);
+  }, 10_000);
+
+  it('StellarTimeoutError message is user-friendly (no raw AbortError)', async () => {
+    process.env.STELLAR_TIMEOUT_MS = '50';
+
+    mockTransactionCall.mockImplementation(
+      () => new Promise(resolve => setTimeout(resolve, 5_000)),
+    );
+
+    const err = await verifyStellarPayment({
+      txHash: 'tx-slow-message',
+      expectedAmount: 1,
+      destinationAddress,
+    }).catch(e => e);
+
+    expect(err).toBeInstanceOf(StellarTimeoutError);
+    expect(err.message).not.toContain('AbortError');
+    expect(err.message).toMatch(/Stellar Horizon did not respond/i);
+  }, 10_000);
+
+  it('respects the STELLAR_TIMEOUT_MS env variable', async () => {
+    process.env.STELLAR_TIMEOUT_MS = '100';
+
+    const start = Date.now();
+    mockTransactionCall.mockImplementation(
+      () => new Promise(resolve => setTimeout(resolve, 5_000)),
+    );
+
+    await expect(
+      verifyStellarPayment({ txHash: 'tx-env-timeout', expectedAmount: 1, destinationAddress }),
+    ).rejects.toBeInstanceOf(StellarTimeoutError);
+
+    // Should have timed out close to 100 ms, not 10 000 ms
+    expect(Date.now() - start).toBeLessThan(2_000);
+  }, 10_000);
 });

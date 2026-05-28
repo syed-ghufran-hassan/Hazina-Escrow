@@ -10,6 +10,7 @@ variable "anthropic_api_key" {}
 variable "escrow_wallet" {}
 variable "agent_wallet_secret" {}
 variable "escrow_contract_id" {}
+variable "cors_allowed_origins" { default = "" }
 
 # ECS Cluster
 resource "aws_ecs_cluster" "main" {
@@ -128,6 +129,7 @@ resource "aws_ecs_task_definition" "backend" {
         { name = "ESCROW_WALLET", value = var.escrow_wallet },
         { name = "AGENT_WALLET_SECRET", value = var.agent_wallet_secret },
         { name = "ESCROW_CONTRACT_ID", value = var.escrow_contract_id },
+        { name = "CORS_ALLOWED_ORIGINS", value = var.cors_allowed_origins },
         { name = "STELLAR_NETWORK", value = "testnet" }
       ]
       mountPoints = [
