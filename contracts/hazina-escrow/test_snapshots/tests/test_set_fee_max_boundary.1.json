@@ -63,7 +63,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                 },
                 {
-                  "u32": 10000
+                  "u32": 2000
                 }
               ]
             }
@@ -255,7 +255,7 @@
                           ]
                         },
                         "val": {
-                          "u32": 10000
+                          "u32": 2000
                         }
                       },
                       {

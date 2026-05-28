@@ -1,4 +1,5 @@
 const HTML_TAG_REGEX = /<\/?[a-z][^>]*>/gi;
+// eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_REGEX = /[\u0000-\u001F\u007F]/g;
 const WHITESPACE_REGEX = /\s+/g;
 

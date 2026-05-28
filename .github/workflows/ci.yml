@@ -142,6 +142,10 @@ jobs:
 
       - name: Run frontend tests
         run: cd frontend && npm test -- --run
+        env:
+          VITE_API_URL: http://localhost:3000
+          VITE_API_KEY: test-api-key
+          VITE_STELLAR_NETWORK: testnet
 
   # Build frontend for production to catch bundler/build errors
   frontend-build:

@@ -170,48 +170,48 @@ export default function DashboardPage() {
   const [walletFilter, setWalletFilter] = useState('');
   const hasLoadedOnceRef = useRef(false);
 
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
-
-  // WebSocket connection for real-time updates
-  const { connected: wsConnected, error: wsError } = useTransactionWebSocket(
-    {
-      datasetIds: datasets.map(d => d.id),
-      enabled: hasLoadedOnce,
-    },
-    {
-      onTransactionUpdate: () => {
-        // Refetch data when transaction updates arrive
-        setIsRefetching(true);
-        void loadDashboard();
-      },
-    }
-  );
-
-  const loadDashboard = async () => {
-    if (hasLoadedOnceRef.current) {
-      setIsRefetching(true);
-    } else {
-      setLoading(true);
-    }
-    setFetchError(null);
-
-    try {
-      const [ds, txs] = await Promise.all([api.getDatasets(), api.getTransactions()]);
-
-      setDatasets(ds.data);
-      setTransactions(txs);
-      setHasLoadedOnce(true);
-      hasLoadedOnceRef.current = true;
-    } catch (err) {
-      setFetchError(err instanceof Error ? err.message : t('dashboard.loadError'));
-    } finally {
-      setLoading(false);
-      setIsRefetching(false);
-    }
-  };
-
   useEffect(() => {
+    let cancelled = false;
+
+    const loadDashboard = async () => {
+      if (hasLoadedOnceRef.current) {
+        setIsRefetching(true);
+      } else {
+        setLoading(true);
+      }
+      setFetchError(null);
+
+      try {
+        const [ds, txs] = await Promise.all([api.getDatasets(), api.getTransactions()]);
+        if (cancelled) {
+          return;
+        }
+
+        setDatasets(ds.data);
+        setTransactions(txs);
+        setHasLoadedOnce(true);
+        hasLoadedOnceRef.current = true;
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+
+        setFetchError(err instanceof Error ? err.message : t('dashboard.loadError'));
+      } finally {
+        if (cancelled) {
+          return;
+        }
+
+        setLoading(false);
+        setIsRefetching(false);
+      }
+    };
+
     void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
   }, [t]);
 
   const totalEarned = datasets.reduce((s, d) => s + d.totalEarned, 0);

@@ -26,4 +26,5 @@ const db = (() => {
   }
 })();
 
-export default db;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export default db as any;

@@ -95,7 +95,7 @@ export const sw: EnglishMessages = {
       dayAgo: 'siku {count} zilizopita',
     },
     errors: {
-      imageNotSupported: "Picha haisisimamiwi",
+      imageNotSupported: 'Picha haisisimamiwi',
     },
   },
   nav: {
@@ -255,6 +255,7 @@ export const sw: EnglishMessages = {
         'Eleza data yako ina nini, ilikusanywaje, na kwa nini wanunuzi wataitaka...',
       dataType: 'Aina ya data',
       pricePerQuery: 'Bei / swali (USDC)',
+      pricePerQueryError: 'Bei lazima iwe kubwa kuliko 0',
       quickPricePresets: 'Bei za haraka:',
       sellerWallet: 'Anwani yako ya Stellar Wallet',
       sellerWalletPlaceholder: 'G... (ufunguo wa umma wa Stellar wa herufi 56)',
@@ -362,7 +363,8 @@ export const sw: EnglishMessages = {
     payAndResearch: 'Lipa {amount} USDC na ufanye utafiti',
     paidModeNote: 'Pochi imeunganishwa — lipa {amount} USDC kwa utafiti halisi kwenye mtandao',
     runDemoInstead: 'Endesha onyesho bila malipo',
-    payInstructions: 'Lipa {amount} USDC kwa pochi yako, kisha bandika hash ya muamala ili kuendesha utafiti.',
+    payInstructions:
+      'Lipa {amount} USDC kwa pochi yako, kisha bandika hash ya muamala ili kuendesha utafiti.',
     payToAddress: 'Anwani ya amana ya wakala',
     txReceived: 'Hash ya muamala imepokelewa — thibitisha ili kuendesha utafiti.',
     txPending: 'Kamilisha malipo kwenye pochi yako, kisha bandika hash ya muamala hapa chini.',

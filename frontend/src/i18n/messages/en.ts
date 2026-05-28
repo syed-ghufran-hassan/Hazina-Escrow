@@ -95,7 +95,7 @@ export const en = {
       dayAgo: '{count}d ago',
     },
     errors: {
-      imageNotSupported: "Image not supported",
+      imageNotSupported: 'Image not supported',
     },
   },
   websocket: {
@@ -259,6 +259,7 @@ export const en = {
         'Describe what your data contains, how it was collected, and why buyers would want it...',
       dataType: 'Data Type',
       pricePerQuery: 'Price / Query (USDC)',
+      pricePerQueryError: 'Price must be greater than 0',
       quickPricePresets: 'Quick price presets:',
       sellerWallet: 'Your Stellar Wallet Address',
       sellerWalletPlaceholder: 'G... (56-character Stellar public key)',
@@ -365,7 +366,8 @@ export const en = {
     payAndResearch: 'Pay {amount} USDC & Research',
     paidModeNote: 'Wallet connected — pay {amount} USDC for real on-chain research',
     runDemoInstead: 'Run free demo',
-    payInstructions: 'Pay {amount} USDC with your wallet, then paste the transaction hash to run the research.',
+    payInstructions:
+      'Pay {amount} USDC with your wallet, then paste the transaction hash to run the research.',
     payToAddress: 'Agent escrow address',
     txReceived: 'Transaction hash received — confirm to run the research.',
     txPending: 'Complete the payment in your wallet, then paste the transaction hash below.',

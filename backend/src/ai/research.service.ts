@@ -162,7 +162,7 @@ CRITICAL: Return ONLY valid JSON. Do not include explanations, markdown, code fe
       `Failed to parse Claude JSON response after retry. Raw output: ${raw.slice(0, 500)}`,
     );
   } catch (err: unknown) {
-    if (err instanceof Anthropic.APITimeoutError) {
+    if (err && typeof err === 'object' && 'name' in err && err.name === 'APITimeoutError') {
       throw new AnthropicTimeoutError(ANTHROPIC_TIMEOUT_MS);
     }
     throw err;

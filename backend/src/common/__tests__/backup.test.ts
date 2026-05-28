@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { BackupService } from '../backup.service';
 import { BackupScheduler } from '../backup.scheduler';
 import fs from 'fs';
@@ -103,15 +103,15 @@ describe('BackupService', () => {
     const backupsAfterRestore = await backupService.listBackups();
 
     // Safety backup should exist (may have been rotated if maxBackups exceeded)
-    const safetyBackup = backupsAfterRestore.find(b => b.filename.startsWith('pre-restore-'));
+    const _safetyBackup = backupsAfterRestore.find(b => b.filename.startsWith('pre-restore-'));
     // Either the safety backup exists, or we have at least the original backup
     expect(backupsAfterRestore.length).toBeGreaterThan(0);
   });
 
   it('should throw error when restoring non-existent backup', async () => {
-    await expect(
-      backupService.restoreBackup('non-existent-backup.json')
-    ).rejects.toThrow('Backup file not found');
+    await expect(backupService.restoreBackup('non-existent-backup.json')).rejects.toThrow(
+      'Backup file not found',
+    );
   });
 });
 

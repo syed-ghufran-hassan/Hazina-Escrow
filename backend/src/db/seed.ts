@@ -1,4 +1,3 @@
-/* eslint-disable prefer-node-protocol,sonarjs/cognitive-complexity */
 import { promises as fs } from 'node:fs';
 import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -35,14 +34,16 @@ interface TransactionFromJSON {
   timestamp: string;
 }
 
-async function seedDatasets(jsonData: any): Promise<void> {
+async function seedDatasets(jsonData: Record<string, unknown>): Promise<void> {
   if (!jsonData.datasets || !Array.isArray(jsonData.datasets)) {
     return;
   }
 
   for (const dataset of jsonData.datasets as DatasetFromJSON[]) {
+    const existing = await db.select().from(datasets).where(eq(datasets.id, dataset.id)).limit(1);
     const existing = await db
       .select()
+      // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
       .from(datasetsTable as typeof datasets)
       .where(eq((datasetsTable as typeof datasets).id, dataset.id))
       .limit(1);
@@ -52,6 +53,7 @@ async function seedDatasets(jsonData: any): Promise<void> {
       continue;
     }
 
+    // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
     await db.insert(datasetsTable as typeof datasets).values({
       id: dataset.id,
       name: dataset.name,
@@ -68,7 +70,7 @@ async function seedDatasets(jsonData: any): Promise<void> {
   }
 }
 
-async function seedTransactions(jsonData: any): Promise<void> {
+async function seedTransactions(jsonData: Record<string, unknown>): Promise<void> {
   if (!jsonData.transactions || !Array.isArray(jsonData.transactions)) {
     return;
   }
@@ -76,6 +78,7 @@ async function seedTransactions(jsonData: any): Promise<void> {
   for (const tx of jsonData.transactions as TransactionFromJSON[]) {
     const existing = await db
       .select()
+      // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
       .from(transactionsTable as typeof transactions)
       .where(eq((transactionsTable as typeof transactions).txHash, tx.txHash))
       .limit(1);
@@ -85,6 +88,7 @@ async function seedTransactions(jsonData: any): Promise<void> {
       continue;
     }
 
+    // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
     await db.insert(transactionsTable as typeof transactions).values({
       id: tx.id,
       datasetId: tx.datasetId,
