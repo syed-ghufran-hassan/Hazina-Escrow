@@ -19,7 +19,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                 },
                 {
-                  "u32": 1258
+                  "u32": 3480
                 }
               ]
             }
@@ -129,7 +129,7 @@
                           ]
                         },
                         "val": {
-                          "u32": 1258
+                          "u32": 3480
                         }
                       }
                     ]

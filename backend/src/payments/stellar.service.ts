@@ -9,6 +9,9 @@ const stellarBreaker = getCircuitBreaker('stellar-horizon', {
   resetTimeoutMs: 60_000, // 60 s
 });
 
+// Configurable via env; read per-call so tests can override it after module load
+const getStellarTimeoutMs = () => parseInt(process.env.STELLAR_TIMEOUT_MS ?? '10000', 10);
+
 interface VerifyParams {
   txHash: string;
   expectedAmount: number;
@@ -22,16 +25,87 @@ interface VerifyResult {
   memo?: string;
 }
 
+/**
+ * Runs `fn` with a hard deadline of `timeoutMs` milliseconds.
+ * Throws a user-friendly StellarTimeoutError if the deadline is exceeded.
+ */
+async function withStellarTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () => {
+          reject(new StellarTimeoutError(timeoutMs));
+        });
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export class StellarTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(
+      `Stellar Horizon did not respond within ${timeoutMs / 1000} seconds. ` +
+        'The payment network may be congested — please try again shortly.',
+    );
+    this.name = 'StellarTimeoutError';
+  }
+}
+
+/**
+ * Marker class for errors whose message is safe to forward to the client as-is.
+ * Only throw this for messages written by us — never wrap a raw SDK or library error.
+ */
+export class PaymentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaymentError';
+  }
+}
+
+async function withHorizonRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const is404 =
+        err &&
+        typeof err === 'object' &&
+        'response' in err &&
+        (err as { response?: { status?: number } }).response?.status === 404;
+      if (is404 && attempt < maxAttempts - 1) {
+        await new Promise(r => setTimeout(r, 1_000 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('unreachable');
+}
+
 export async function verifyStellarPayment(params: VerifyParams): Promise<VerifyResult> {
   const { txHash, expectedAmount, destinationAddress } = params;
 
   try {
-    const [tx, ops] = await stellarBreaker.execute(() =>
-      Promise.all([
-        server.transactions().transaction(txHash).call(),
-        server.operations().forTransaction(txHash).call(),
-      ]),
+    const [tx, ops] = await withStellarTimeout(
+      () =>
+        withHorizonRetry(() =>
+          stellarBreaker.execute(() =>
+            Promise.all([
+              server.transactions().transaction(txHash).call(),
+              server.operations().forTransaction(txHash).call(),
+            ]),
+          ),
+        ),
+      getStellarTimeoutMs(),
     );
+
     const paymentOps = ops.records.filter(
       op =>
         op.type === 'payment' &&
@@ -80,12 +154,18 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
       memo: tx.memo || '',
     };
   } catch (err: unknown) {
+    if (err instanceof StellarTimeoutError) {
+      throw err; // propagate the user-friendly timeout error as-is
+    }
     if (err && typeof err === 'object' && 'response' in err) {
       const httpErr = err as { response?: { status?: number } };
       if (httpErr.response?.status === 404) {
         return { valid: false, reason: 'Transaction not found on Stellar testnet' };
       }
     }
-    throw err;
+    // Log the full SDK error server-side but never forward it to the client —
+    // Stellar errors can contain sequence numbers, account IDs, and other internals.
+    console.error('[Stellar] Unexpected Horizon error:', err);
+    throw new Error('Stellar network error — please try again shortly');
   }
 }

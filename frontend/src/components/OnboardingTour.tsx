@@ -58,6 +58,7 @@ export default function OnboardingTour() {
 
     const updatePosition = () => {
       const step = tourSteps[currentStep];
+      if (!step) return;
       const element = document.querySelector(step.target);
       if (element) {
         const rect = element.getBoundingClientRect();
@@ -126,7 +127,7 @@ export default function OnboardingTour() {
           top: `${position.top}px`,
           left: `${position.left}px`,
           transform:
-            step.placement === "top"
+            step?.placement === "top"
               ? "translate(-50%, -100%)"
               : "translate(-50%, 0)",
         }}
@@ -134,7 +135,7 @@ export default function OnboardingTour() {
         {/* Header */}
         <div className="flex items-start justify-between mb-3">
           <h3 className="font-display font-semibold text-lg text-foreground pr-4">
-            {step.title}
+            {step?.title}
           </h3>
           <button
             onClick={handleClose}
@@ -146,7 +147,7 @@ export default function OnboardingTour() {
 
         {/* Description */}
         <p className="text-sm text-foreground-muted font-body leading-relaxed mb-4">
-          {step.description}
+          {step?.description}
         </p>
 
         {/* Progress */}

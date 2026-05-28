@@ -44,3 +44,9 @@ variable "escrow_contract_id" {
   description = "Soroban Escrow Contract ID"
   type        = string
 }
+
+variable "cors_allowed_origins" {
+  description = "Comma-separated CORS origin whitelist for the backend API"
+  type        = string
+  default     = ""
+}

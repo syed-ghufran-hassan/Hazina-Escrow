@@ -21,10 +21,11 @@ module "compute" {
   public_subnets      = module.networking.public_subnets
   private_subnets     = module.networking.private_subnets
   file_system_id      = module.storage.file_system_id
-  anthropic_api_key   = var.anthropic_api_key
-  escrow_wallet       = var.escrow_wallet
-  agent_wallet_secret = var.agent_wallet_secret
-  escrow_contract_id  = var.escrow_contract_id
+  anthropic_api_key    = var.anthropic_api_key
+  escrow_wallet        = var.escrow_wallet
+  agent_wallet_secret  = var.agent_wallet_secret
+  escrow_contract_id   = var.escrow_contract_id
+  cors_allowed_origins = var.cors_allowed_origins
 }
 
 module "frontend" {

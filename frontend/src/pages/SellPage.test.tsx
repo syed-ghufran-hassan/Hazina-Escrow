@@ -63,11 +63,28 @@ describe('SellPage', () => {
     ['addresses with invalid characters', `G${'a'.repeat(55)}`],
   ])('shows wallet validation error for %s', (_label, wallet) => {
     renderSellPage();
-    fireEvent.change(screen.getByPlaceholderText('G... (56-character Stellar public key)'), {
+    const walletInput = screen.getByPlaceholderText('G... (56-character Stellar public key)');
+    fireEvent.change(walletInput, {
       target: { value: wallet },
     });
+    // Blur the input to trigger validation
+    fireEvent.blur(walletInput);
 
     expect(screen.getByText(walletError)).toBeTruthy();
+    const submitButton = screen.getByRole('button', { name: 'Publish to Marketplace' });
+    expect(submitButton).toHaveProperty('disabled', true);
+  });
+
+  it.each([
+    ['zero', '0'],
+    ['negative number', '-5'],
+  ])('shows price validation error for %s', (_label, price) => {
+    renderSellPage();
+    const priceInput = screen.getByDisplayValue('0.05');
+    fireEvent.change(priceInput, { target: { value: price } });
+    fireEvent.blur(priceInput);
+
+    expect(screen.getByText('Price must be greater than 0')).toBeTruthy();
     const submitButton = screen.getByRole('button', { name: 'Publish to Marketplace' });
     expect(submitButton).toHaveProperty('disabled', true);
   });
@@ -87,9 +104,7 @@ describe('SellPage', () => {
       target: { value: '{invalid-json' },
     });
 
-    expect(
-      screen.getByText('Invalid JSON — please check your data format'),
-    ).toBeTruthy();
+    expect(screen.getByText('Invalid JSON — please check your data format')).toBeTruthy();
     const submitButton = screen.getByRole('button', { name: 'Publish to Marketplace' });
     expect(submitButton).toHaveProperty('disabled', true);
   });
@@ -98,7 +113,7 @@ describe('SellPage', () => {
     type CreatedDataset = Awaited<ReturnType<typeof api.createDataset>>;
     let resolveRequest: ((value: CreatedDataset) => void) | undefined;
     vi.mocked(api.createDataset).mockReturnValueOnce(
-      new Promise<CreatedDataset>((resolve) => {
+      new Promise<CreatedDataset>(resolve => {
         resolveRequest = resolve;
       }),
     );
@@ -110,15 +125,17 @@ describe('SellPage', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish to Marketplace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
 
-    expect(screen.getByRole('button', { name: 'Publishing Listing...' })).toBeTruthy();
-    expect(api.createDataset).toHaveBeenCalledWith({
-      name: 'Test Dataset',
-      description: 'A useful dataset description',
-      type: 'whale-wallets',
-      pricePerQuery: 0.05,
-      sellerWallet: validWallet,
-      data: { rows: [1, 2, 3] },
+    await waitFor(() => {
+      expect(api.createDataset).toHaveBeenCalledWith({
+        name: 'Test Dataset',
+        description: 'A useful dataset description',
+        type: 'whale-wallets',
+        pricePerQuery: 0.05,
+        sellerWallet: validWallet,
+        data: { rows: [1, 2, 3] },
+      });
     });
 
     resolveRequest?.({
@@ -148,6 +165,7 @@ describe('SellPage', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish to Marketplace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
 
     await waitFor(() => {
       expect(screen.getByText('Create failed')).toBeTruthy();

@@ -1,8 +1,19 @@
 import { v4 as uuidv4 } from 'uuid';
-import { getAllDatasets, getDataset, updateDataset, addTransaction, txHashUsed } from '../common/storage';
+import {
+  getAllDatasets,
+  getDataset,
+  updateDataset,
+  addTransaction,
+  txHashUsed,
+} from '../common/storage';
 import { verifyStellarPayment } from '../payments/stellar.service';
 import { sendUsdcPayment, getAgentPublicKey } from './agent.wallet';
-import { synthesizeResearch, parseRiskTolerance, parseBudget, ResearchReport } from '../ai/research.service';
+import {
+  synthesizeResearch,
+  parseRiskTolerance,
+  parseBudget,
+  ResearchReport,
+} from '../ai/research.service';
 import { notifySeller } from '../webhooks/webhook.service';
 
 // Fee the agent charges the human (1 USDC flat)
@@ -10,10 +21,10 @@ export const AGENT_FEE_USDC = 1;
 
 // Dataset types the agent purchases and their roles in the report
 export const SELLER_TYPES = [
-  { type: 'yield-data',    role: 'yieldData',     description: 'APY & protocol data' },
-  { type: 'whale-wallets', role: 'whaleData',     description: 'Whale wallet movements' },
-  { type: 'risk-scores',   role: 'riskData',      description: 'Protocol risk scores' },
-  { type: 'sentiment',     role: 'sentimentData', description: 'Social market sentiment' },
+  { type: 'yield-data', role: 'yieldData', description: 'APY & protocol data' },
+  { type: 'whale-wallets', role: 'whaleData', description: 'Whale wallet movements' },
+  { type: 'risk-scores', role: 'riskData', description: 'Protocol risk scores' },
+  { type: 'sentiment', role: 'sentimentData', description: 'Social market sentiment' },
 ] as const;
 
 export interface AgentJob {
@@ -44,10 +55,7 @@ export interface PurchaseRecord {
  * Verifies the human's 1 USDC payment then runs the full research pipeline.
  * Real mode: sends actual Stellar payments from agent's funded wallet.
  */
-export async function runResearchAgent(
-  query: string,
-  humanTxHash: string
-): Promise<AgentJob> {
+export async function runResearchAgent(query: string, humanTxHash: string): Promise<AgentJob> {
   // 1. Verify human's 1 USDC payment to escrow wallet
   if (await txHashUsed(humanTxHash)) {
     throw new Error('Transaction hash already used');
@@ -81,7 +89,7 @@ export async function runResearchAgentDemo(query: string): Promise<AgentJob> {
 async function _executeResearch(
   query: string,
   humanTxHash: string,
-  demo: boolean
+  demo: boolean,
 ): Promise<AgentJob> {
   const jobId = `job-${uuidv4()}`;
   const budget = parseBudget(query);
@@ -96,7 +104,7 @@ async function _executeResearch(
   let totalSpent = 0;
 
   for (const seller of SELLER_TYPES) {
-    const dataset = allDatasets.find((d) => d.type === seller.type);
+    const dataset = allDatasets.find(d => d.type === seller.type);
     if (!dataset) {
       console.warn(`[Agent] No dataset found for type: ${seller.type}`);
       collectedData[seller.role] = {};
@@ -151,7 +159,6 @@ async function _executeResearch(
       amount: dataset.pricePerQuery,
       sellerPaid: true,
       sellerAmount: parseFloat((dataset.pricePerQuery * 0.95).toFixed(7)),
-      sellerTxHash: txHash,
       buyerQuery: `[Agent Job ${jobId}] ${query}`,
       timestamp: new Date().toISOString(),
     });
@@ -184,10 +191,10 @@ async function _executeResearch(
     userQuery: query,
     budget,
     riskTolerance,
-    yieldData:     collectedData['yieldData']     ?? {},
-    whaleData:     collectedData['whaleData']      ?? {},
-    riskData:      collectedData['riskData']       ?? {},
-    sentimentData: collectedData['sentimentData']  ?? {},
+    yieldData: collectedData['yieldData'] ?? {},
+    whaleData: collectedData['whaleData'] ?? {},
+    riskData: collectedData['riskData'] ?? {},
+    sentimentData: collectedData['sentimentData'] ?? {},
     datasetCosts,
   });
 

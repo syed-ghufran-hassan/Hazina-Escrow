@@ -3,7 +3,6 @@ import path from 'path';
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 import {
   addTransaction,
-  getUnpaidTransactions,
   readStore,
   txHashUsed,
   updateDataset,
@@ -34,6 +33,7 @@ async function seedStore(overrides?: Partial<Store>): Promise<void> {
     datasets: [FIXTURE_DATASET],
     transactions: [],
     webhooks: [],
+    payoutFailures: [],
   };
   await writeStore({
     ...base,
@@ -62,7 +62,6 @@ describe('storage', () => {
       datasetId: FIXTURE_DATASET.id,
       txHash: 'tx-hash-existing',
       amount: FIXTURE_DATASET.pricePerQuery,
-      sellerPaid: true,
       timestamp: new Date().toISOString(),
     };
     await seedStore({ transactions: [existingTx] });
@@ -99,15 +98,6 @@ describe('storage', () => {
         txHash: `hash-${idx}`,
         amount: 0.01,
         timestamp: new Date().toISOString(),
-      Promise.resolve().then(() => {
-        addTransaction({
-          id: `tx-${idx}`,
-          datasetId: FIXTURE_DATASET.id,
-          txHash: `hash-${idx}`,
-          amount: 0.01,
-          sellerPaid: true,
-          timestamp: new Date().toISOString(),
-        });
       }),
     );
 
@@ -116,56 +106,5 @@ describe('storage', () => {
     const txs = (await readStore()).transactions;
     expect(txs).toHaveLength(25);
     expect(new Set(txs.map((tx) => tx.txHash)).size).toBe(25);
-  });
-
-  it('returns only unpaid seller transactions', () => {
-    seedStore({
-      transactions: [
-        {
-          id: 'tx-paid',
-          datasetId: FIXTURE_DATASET.id,
-          txHash: 'hash-paid',
-          amount: 0.05,
-          sellerPaid: true,
-          timestamp: new Date().toISOString(),
-        },
-        {
-          id: 'tx-unpaid',
-          datasetId: FIXTURE_DATASET.id,
-          txHash: 'hash-unpaid',
-          amount: 0.05,
-          sellerPaid: false,
-          sellerAmount: 0.0475,
-          sellerPayoutError: 'insufficient balance',
-          timestamp: new Date().toISOString(),
-        },
-      ],
-    });
-
-    expect(getUnpaidTransactions()).toEqual([
-      expect.objectContaining({
-        id: 'tx-unpaid',
-        sellerPaid: false,
-        sellerPayoutError: 'insufficient balance',
-      }),
-    ]);
-  });
-
-  it('treats legacy transactions without sellerPaid as already settled', () => {
-    seedStore({
-      transactions: [
-        {
-          id: 'tx-legacy',
-          datasetId: FIXTURE_DATASET.id,
-          txHash: 'hash-legacy',
-          amount: 0.05,
-          timestamp: new Date().toISOString(),
-        } as Transaction,
-      ],
-    });
-
-    const tx = readStore().transactions[0];
-    expect(tx?.sellerPaid).toBe(true);
-    expect(getUnpaidTransactions()).toEqual([]);
   });
 });

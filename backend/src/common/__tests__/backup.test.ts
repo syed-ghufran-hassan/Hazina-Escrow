@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { BackupService } from '../backup.service';
 import { BackupScheduler } from '../backup.scheduler';
 import fs from 'fs';
@@ -31,7 +31,8 @@ describe('BackupService', () => {
     }
   });
 
-  it('should create backup directory if it does not exist', () => {
+  it('should create backup directory if it does not exist', async () => {
+    await backupService.listBackups();
     expect(fs.existsSync(TEST_BACKUP_DIR)).toBe(true);
   });
 
@@ -52,7 +53,7 @@ describe('BackupService', () => {
     await backupService.createBackup();
     await backupService.createBackup();
 
-    const backups = backupService.listBackups();
+    const backups = await backupService.listBackups();
     expect(backups.length).toBe(2);
     expect(backups[0].filename).toBeDefined();
     expect(backups[0].timestamp).toBeDefined();
@@ -66,15 +67,16 @@ describe('BackupService', () => {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
 
-    const backups = backupService.listBackups();
+    const backups = await backupService.listBackups();
     expect(backups.length).toBe(5);
   });
 
   it('should get backup statistics', async () => {
     await backupService.createBackup();
+    await new Promise(resolve => setTimeout(resolve, 5));
     await backupService.createBackup();
 
-    const stats = backupService.getBackupStats();
+    const stats = await backupService.getBackupStats();
     expect(stats.totalBackups).toBe(2);
     expect(stats.totalSize).toBeGreaterThan(0);
     expect(stats.oldestBackup).toBeDefined();
@@ -95,21 +97,21 @@ describe('BackupService', () => {
 
   it('should create safety backup before restoring', async () => {
     const metadata = await backupService.createBackup();
-    
+
     await backupService.restoreBackup(metadata.filename);
 
-    const backupsAfterRestore = backupService.listBackups();
-    
+    const backupsAfterRestore = await backupService.listBackups();
+
     // Safety backup should exist (may have been rotated if maxBackups exceeded)
-    const safetyBackup = backupsAfterRestore.find(b => b.filename.startsWith('pre-restore-'));
+    const _safetyBackup = backupsAfterRestore.find(b => b.filename.startsWith('pre-restore-'));
     // Either the safety backup exists, or we have at least the original backup
     expect(backupsAfterRestore.length).toBeGreaterThan(0);
   });
 
   it('should throw error when restoring non-existent backup', async () => {
-    await expect(
-      backupService.restoreBackup('non-existent-backup.json')
-    ).rejects.toThrow('Backup file not found');
+    await expect(backupService.restoreBackup('non-existent-backup.json')).rejects.toThrow(
+      'Backup file not found',
+    );
   });
 });
 
@@ -177,9 +179,9 @@ describe('BackupScheduler', () => {
     scheduler.start();
 
     // Wait a bit for the initial backup
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 200));
 
-    const backups = scheduler.getBackupService().listBackups();
+    const backups = await scheduler.getBackupService().listBackups();
     expect(backups.length).toBeGreaterThan(0);
 
     scheduler.stop();

@@ -64,6 +64,8 @@ describe('QueryModal', () => {
       },
       transaction: {
         hash: 'demo-hash',
+        status: 'confirmed',
+        deliveryStatus: 'delivered',
         amount: 0.05,
         sellerReceived: 0.0475,
         platformFee: 0.0025,
@@ -77,7 +79,14 @@ describe('QueryModal', () => {
       expect(api.initiateQuery).toHaveBeenCalledWith('ds-query-1');
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Get AI Analysis' }));
+    // Demo mode is OFF by default — check it to enable demo mode
+    fireEvent.click(screen.getByLabelText(/Demo mode/i));
+
+    // Now in demo mode — button reads "Get AI Analysis"
+    const analyzeButton = await waitFor(() =>
+      screen.getByRole('button', { name: 'Get AI Analysis' }),
+    );
+    fireEvent.click(analyzeButton);
 
     await waitFor(() => {
       expect(screen.getByText('Payment Verified')).toBeTruthy();
@@ -87,7 +96,7 @@ describe('QueryModal', () => {
     expect(onSuccess).toHaveBeenCalledWith({
       id: 'ds-query-1',
       queriesServed: 13,
-      totalEarned: 3.5475,
+      totalEarned: 3.5,
     });
   });
 
@@ -107,6 +116,8 @@ describe('QueryModal', () => {
       },
       transaction: {
         hash: 'demo-hash',
+        status: 'confirmed',
+        deliveryStatus: 'delivered',
         amount: 0.05,
         sellerReceived: 0.0475,
         platformFee: 0.0025,
@@ -119,6 +130,9 @@ describe('QueryModal', () => {
     await waitFor(() => {
       expect(api.initiateQuery).toHaveBeenCalledWith('ds-query-1');
     });
+
+    // Check demo mode to enable it
+    fireEvent.click(screen.getByLabelText(/Demo mode/i));
 
     fireEvent.click(screen.getByRole('button', { name: 'Get AI Analysis' }));
 
@@ -144,9 +158,10 @@ describe('QueryModal', () => {
       expect(api.initiateQuery).toHaveBeenCalled();
     });
 
-    fireEvent.click(screen.getByLabelText(/Demo mode/i));
-
-    const verifyButton = screen.getByRole('button', { name: 'Verify & Get Data' });
+    // Demo mode is OFF by default — button is "Verify & Get Data" and disabled (no tx hash)
+    const verifyButton = await waitFor(() =>
+      screen.getByRole('button', { name: 'Verify & Get Data' }),
+    );
     expect(verifyButton).toHaveProperty('disabled', true);
 
     fireEvent.change(screen.getByPlaceholderText('Paste your Stellar transaction hash...'), {
@@ -163,5 +178,26 @@ describe('QueryModal', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Try Again' }));
     expect(screen.getByText('Transaction Hash')).toBeTruthy();
+  });
+
+  it('traps focus inside the modal and closes on Escape', async () => {
+    const onClose = vi.fn();
+    renderModal({ onClose });
+
+    const closeButton = screen.getByRole('button', { name: 'Close' });
+    const proceedButton = screen.getByRole('button', { name: 'Proceed to Payment' });
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(closeButton);
+    });
+
+    fireEvent.keyDown(closeButton, { key: 'Tab' });
+    expect(document.activeElement).toBe(closeButton);
+
+    fireEvent.keyDown(closeButton, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(proceedButton);
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
