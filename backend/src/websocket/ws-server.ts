@@ -28,7 +28,7 @@ export class WebSocketServer_Hazina {
   private wss: WebSocketServer;
   private clients: Map<string, ClientSession> = new Map();
   private clientCounter: number = 0;
-  private heartbeatInterval: NodeJS.Timer | null = null;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
   private apiKey: string;
 
   constructor(httpServer: HTTPServer, apiKey: string = '') {
@@ -95,7 +95,7 @@ export class WebSocketServer_Hazina {
   /**
    * Handle incoming client messages
    */
-  private handleMessage(clientId: string, data: WebSocket.Data): void {
+  private handleMessage(clientId: string, data: any): void {
     const session = this.clients.get(clientId);
     if (!session) return;
 

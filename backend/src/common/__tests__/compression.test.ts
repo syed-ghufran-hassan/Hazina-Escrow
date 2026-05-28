@@ -14,12 +14,15 @@ import { createCompressionMiddleware } from '../compression';
 function rawParser(
   res: import('http').IncomingMessage,
   cb: (err: Error | null, body: Buffer) => void,
-) {
+): void {
   const chunks: Buffer[] = [];
   res.on('data', (chunk: Buffer) => chunks.push(chunk));
   res.on('end', () => cb(null, Buffer.concat(chunks)));
   res.on('error', cb);
 }
+
+// Type assertion to match supertest's expected parser signature
+const supertestRawParser = rawParser as unknown as (res: Response, cb: (err: Error | null, body: any) => void) => void;
 
 /** Build a minimal Express app with the compression middleware + test routes. */
 function buildApp(opts?: Parameters<typeof createCompressionMiddleware>[0]) {
@@ -50,7 +53,8 @@ describe('compression — brotli (br)', () => {
       .get('/json')
       .set('Accept-Encoding', 'br')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
 
     expect(res.status).toBe(200);
     expect(res.headers['content-encoding']).toBe('br');
@@ -64,7 +68,8 @@ describe('compression — brotli (br)', () => {
       .get('/json')
       .set('Accept-Encoding', 'br')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['vary']).toBe('Accept-Encoding');
   });
 
@@ -74,7 +79,8 @@ describe('compression — brotli (br)', () => {
       .get('/json')
       .set('Accept-Encoding', 'br')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['content-length']).toBeUndefined();
   });
 });
@@ -104,7 +110,8 @@ describe('compression — encoding negotiation', () => {
       .get('/json')
       .set('Accept-Encoding', 'gzip, br')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['content-encoding']).toBe('br');
   });
 
@@ -114,7 +121,8 @@ describe('compression — encoding negotiation', () => {
       .get('/json')
       .set('Accept-Encoding', 'br;q=0.5, gzip;q=0.9')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['content-encoding']).toBe('gzip');
   });
 
@@ -124,7 +132,8 @@ describe('compression — encoding negotiation', () => {
       .get('/json')
       .set('Accept-Encoding', 'identity')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['content-encoding']).toBeUndefined();
   });
 });
@@ -138,7 +147,8 @@ describe('compression — threshold', () => {
       .get('/tiny')
       .set('Accept-Encoding', 'br, gzip')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['content-encoding']).toBeUndefined();
   });
 
@@ -148,7 +158,8 @@ describe('compression — threshold', () => {
       .get('/tiny')
       .set('Accept-Encoding', 'gzip')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['content-encoding']).toBe('gzip');
   });
 });
@@ -162,7 +173,8 @@ describe('compression — content-type filtering', () => {
       .get('/text')
       .set('Accept-Encoding', 'gzip')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['content-encoding']).toBe('gzip');
   });
 
@@ -172,7 +184,8 @@ describe('compression — content-type filtering', () => {
       .get('/image')
       .set('Accept-Encoding', 'br, gzip')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['content-encoding']).toBeUndefined();
   });
 });
@@ -186,7 +199,8 @@ describe('compression — Vary header', () => {
       .get('/tiny')
       .set('Accept-Encoding', 'identity')
       .buffer(true)
-      .parse(rawParser);
+      // @ts-expect-error - supertest type mismatch, function works at runtime
+      .parse(supertestRawParser);
     expect(res.headers['vary']).toBe('Accept-Encoding');
   });
 });

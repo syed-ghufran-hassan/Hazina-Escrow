@@ -18,9 +18,9 @@ describe("Webhook Service", () => {
   let requestMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    requestMock = vi.fn();
-    vi.spyOn(http, "request").mockImplementation(requestMock);
-    vi.spyOn(https, "request").mockImplementation(requestMock);
+    requestMock = vi.fn(() => ({}) as any);
+    vi.spyOn(http, "request").mockImplementation(requestMock as any);
+    vi.spyOn(https, "request").mockImplementation(requestMock as any);
     vi.clearAllMocks();
   });
 

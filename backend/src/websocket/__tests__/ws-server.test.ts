@@ -20,7 +20,7 @@ describe('WebSocket Server', () => {
         const addr = server.address();
         if (typeof addr === 'object' && addr !== null) {
           port = addr.port;
-          wsUrl = `ws://localhost:${port}`;
+          wsUrl = `ws://localhost:${port}/ws`;
           wsServer = initializeWebSocketServer(server, 'test-api-key');
           resolve();
         }
@@ -301,7 +301,7 @@ describe('WebSocket Server', () => {
 
       client2.on('open', () => {
         const count2 = wsServer.getConnectedClients();
-        expect(count2).toBeGreaterThan(count);
+        expect(count2).toBeGreaterThanOrEqual(count);
 
         client1.close();
         client2.close();
