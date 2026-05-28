@@ -32,16 +32,21 @@ describe('CORS configuration', () => {
       CORS_ALLOWED_ORIGINS: 'https://app.hazina.example,https://admin.hazina.example',
     });
 
-    options.origin?.('https://admin.hazina.example', (error, allow) => {
-      expect(error).toBeNull();
-      expect(allow).toBe(true);
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (options.origin as any)?.(
+      'https://admin.hazina.example',
+      (error: Error | null, allow: boolean) => {
+        expect(error).toBeNull();
+        expect(allow).toBe(true);
+      },
+    );
   });
 
   it('allows requests without an Origin header', () => {
     const options = createCorsOptions({ CORS_ALLOWED_ORIGINS: 'https://app.hazina.example' });
 
-    options.origin?.(undefined, (error, allow) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (options.origin as any)?.(undefined, (error: Error | null, allow: boolean) => {
       expect(error).toBeNull();
       expect(allow).toBe(true);
     });
@@ -50,7 +55,8 @@ describe('CORS configuration', () => {
   it('rejects browser origins outside the whitelist', () => {
     const options = createCorsOptions({ CORS_ALLOWED_ORIGINS: 'https://app.hazina.example' });
 
-    options.origin?.('https://evil.example', (error, allow) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (options.origin as any)?.('https://evil.example', (error: Error | null, allow: boolean) => {
       expect(error).toEqual(new Error('Origin https://evil.example is not allowed by CORS'));
       expect(allow).toBeUndefined();
     });

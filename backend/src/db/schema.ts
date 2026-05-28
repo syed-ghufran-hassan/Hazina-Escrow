@@ -4,6 +4,10 @@ import { sqliteTable, text as sqliteText, integer as sqliteInteger, index as sql
 
 // ── PostgreSQL tables ────────────────────────────────────────────────────────
 
+const getSchemaObjects = () => {
+  if (isPostgres) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { pgTable, text, integer, numeric, boolean } = require('drizzle-orm/pg-core');
 export const datasets = pgTable(
   'datasets',
   {
@@ -45,6 +49,23 @@ export const webhooks = pgTable('webhooks', {
   createdAt: text('created_at').notNull(),
 });
 
+    const webhooks = pgTable('webhooks', {
+      id: text('id').primaryKey(),
+      sellerWallet: text('seller_wallet').notNull(),
+      url: text('url').notNull(),
+      secret: text('secret').notNull(),
+      events: text('events')
+        .array()
+        .notNull()
+        .default(sql`'{}'`),
+      active: boolean('active').notNull().default(true),
+      createdAt: text('created_at').notNull(),
+    });
+
+    return { datasets, transactions, webhooks };
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { sqliteTable, text, integer } = require('drizzle-orm/sqlite-core');
 // ── SQLite tables (used when DATABASE_URL is not postgres) ───────────────────
 
 export const datasetsSqlite = sqliteTable(

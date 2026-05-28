@@ -1,4 +1,3 @@
-/* eslint-disable prefer-node-protocol,sonarjs/cognitive-complexity */
 import { promises as fs } from 'node:fs';
 import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -35,12 +34,13 @@ interface TransactionFromJSON {
   timestamp: string;
 }
 
-async function seedDatasets(jsonData: any): Promise<void> {
+async function seedDatasets(jsonData: Record<string, unknown>): Promise<void> {
   if (!jsonData.datasets || !Array.isArray(jsonData.datasets)) {
     return;
   }
 
   for (const dataset of jsonData.datasets as DatasetFromJSON[]) {
+    const existing = await db.select().from(datasets).where(eq(datasets.id, dataset.id)).limit(1);
     const existing = await db
       .select()
       .from(datasetsTable as typeof datasets)
@@ -68,7 +68,7 @@ async function seedDatasets(jsonData: any): Promise<void> {
   }
 }
 
-async function seedTransactions(jsonData: any): Promise<void> {
+async function seedTransactions(jsonData: Record<string, unknown>): Promise<void> {
   if (!jsonData.transactions || !Array.isArray(jsonData.transactions)) {
     return;
   }

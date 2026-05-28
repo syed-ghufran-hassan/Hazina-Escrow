@@ -2,7 +2,11 @@ import type { CorsOptions } from 'cors';
 
 const DEFAULT_DEV_ORIGIN = 'http://localhost:5173';
 
-type CorsEnv = Pick<NodeJS.ProcessEnv, 'CORS_ALLOWED_ORIGINS' | 'FRONTEND_URL' | 'NODE_ENV'>;
+type CorsEnv = {
+  CORS_ALLOWED_ORIGINS?: string;
+  FRONTEND_URL?: string;
+  NODE_ENV?: string;
+};
 
 export function parseCorsAllowedOrigins(env: CorsEnv = process.env): string[] {
   const configuredOrigins = env.CORS_ALLOWED_ORIGINS ?? env.FRONTEND_URL;

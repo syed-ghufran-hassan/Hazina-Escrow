@@ -7,8 +7,22 @@ vi.mock('../webhooks/webhook.service', () => ({
   notifySeller: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock('./datasets.repository', () => ({
+  getAllDatasets: vi.fn(),
+  getDataset: vi.fn(),
+  addDataset: vi.fn(),
+  getTransactions: vi.fn(),
+  getTransactionsCount: vi.fn(),
+}));
+
 import { datasetsRouter } from './datasets.router';
-import { writeStore, type Dataset, type Store, type Transaction } from '../common/storage';
+import {
+  getAllDatasets,
+  getDataset,
+  getTransactions,
+  getTransactionsCount,
+} from './datasets.repository';
+import type { Dataset, Transaction } from '../common/storage';
 
 const SELLER_A = `G${'A'.repeat(55)}`;
 const SELLER_B = `G${'B'.repeat(55)}`;
@@ -82,15 +96,6 @@ function signSellerJwt(
   return `${header}.${body}.${signature}`;
 }
 
-async function seedStore(overrides?: Partial<Store>) {
-  await writeStore({
-    datasets: [datasetA, datasetB],
-    transactions,
-    webhooks: [],
-    ...overrides,
-  });
-}
-
 describe('datasets seller dashboard auth', () => {
   let app: Express;
   const originalSellerJwtSecret = process.env.SELLER_JWT_SECRET;
@@ -98,7 +103,17 @@ describe('datasets seller dashboard auth', () => {
   beforeEach(async () => {
     app = makeApp();
     process.env.SELLER_JWT_SECRET = 'test-secret';
-    await seedStore();
+
+    vi.mocked(getAllDatasets).mockResolvedValue([datasetA, datasetB]);
+    vi.mocked(getDataset).mockImplementation(async (id: string) =>
+      [datasetA, datasetB].find(d => d.id === id),
+    );
+    vi.mocked(getTransactions).mockImplementation(async (datasetId?: string) =>
+      datasetId ? transactions.filter(t => t.datasetId === datasetId) : transactions,
+    );
+    vi.mocked(getTransactionsCount).mockImplementation(async (datasetId?: string) =>
+      datasetId ? transactions.filter(t => t.datasetId === datasetId).length : transactions.length,
+    );
   });
 
   afterEach(() => {

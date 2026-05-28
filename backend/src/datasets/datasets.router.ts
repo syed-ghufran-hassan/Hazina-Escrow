@@ -7,8 +7,8 @@ import {
   addDataset,
   getTransactions,
   getTransactionsCount,
-  Dataset,
-} from '../common/storage';
+} from './datasets.repository';
+import type { Dataset } from '../common/storage';
 import { validateBody } from '../common/validate';
 import { sanitizeUserText } from '../common/sanitize';
 import { notifySeller } from '../webhooks/webhook.service';
