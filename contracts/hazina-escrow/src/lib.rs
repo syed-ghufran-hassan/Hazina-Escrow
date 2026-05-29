@@ -2,13 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token,
-    Address, Env, String,
-};
-
-const MAX_BASIS_POINTS: u32 = 10_000;
-const MAX_EXPIRY_SECONDS: u64 = 30 * 24 * 60 * 60;
-    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env,
-    String, Vec,
+    Address, Env, String, Vec,
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -20,6 +14,7 @@ const ESCROW_BUMP_LEDGERS: u32 = 518_400;
 const ESCROW_MIN_TTL: u32 = 17_280;
 
 const MAX_BASIS_POINTS: u32 = 10_000;
+const MAX_EXPIRY_SECONDS: u64 = 30 * 24 * 60 * 60;
 
 // Safety cap on the platform fee: 2_000 bps = 20%. Applies to both the
 // default fee and per-dataset overrides. Existing escrows are unaffected
