@@ -65,7 +65,7 @@ describe("Webhook Router", () => {
       fs.copyFileSync(DATA_PATH, BACKUP_PATH);
     }
     // Seed clean store
-    const clean: Store = { datasets: [], transactions: [], webhooks: [] };
+    const clean: Store = { datasets: [], transactions: [], webhooks: [], payoutFailures: [] };
     await writeStore(clean);
 
     app = express();
@@ -346,4 +346,3 @@ describe("Webhook Router", () => {
     });
   });
 });
-

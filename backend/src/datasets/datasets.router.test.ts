@@ -7,8 +7,31 @@ vi.mock('../webhooks/webhook.service', () => ({
   notifySeller: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock('./datasets.repository', () => ({
+  getAllDatasets: vi.fn(),
+  getDataset: vi.fn(),
+  addDataset: vi.fn(),
+  getTransactions: vi.fn(),
+  getTransactionsCount: vi.fn(),
+}));
+
+const { mockIsValidStellarAddress } = vi.hoisted(() => ({
+  mockIsValidStellarAddress: vi.fn<[string], boolean>(),
+}));
+
+vi.mock('@stellar/stellar-sdk', () => ({
+  StrKey: { isValidEd25519PublicKey: mockIsValidStellarAddress },
+}));
+
 import { datasetsRouter } from './datasets.router';
-import { writeStore, type Dataset, type Store, type Transaction } from '../common/storage';
+import {
+  getAllDatasets,
+  getDataset,
+  addDataset,
+  getTransactions,
+  getTransactionsCount,
+} from './datasets.repository';
+import type { Dataset, Transaction } from '../common/storage';
 
 const SELLER_A = `G${'A'.repeat(55)}`;
 const SELLER_B = `G${'B'.repeat(55)}`;
@@ -82,15 +105,6 @@ function signSellerJwt(
   return `${header}.${body}.${signature}`;
 }
 
-async function seedStore(overrides?: Partial<Store>) {
-  await writeStore({
-    datasets: [datasetA, datasetB],
-    transactions,
-    webhooks: [],
-    ...overrides,
-  });
-}
-
 describe('datasets seller dashboard auth', () => {
   let app: Express;
   const originalSellerJwtSecret = process.env.SELLER_JWT_SECRET;
@@ -98,7 +112,17 @@ describe('datasets seller dashboard auth', () => {
   beforeEach(async () => {
     app = makeApp();
     process.env.SELLER_JWT_SECRET = 'test-secret';
-    await seedStore();
+
+    vi.mocked(getAllDatasets).mockResolvedValue([datasetA, datasetB]);
+    vi.mocked(getDataset).mockImplementation(async (id: string) =>
+      [datasetA, datasetB].find(d => d.id === id),
+    );
+    vi.mocked(getTransactions).mockImplementation(async (datasetId?: string) =>
+      datasetId ? transactions.filter(t => t.datasetId === datasetId) : transactions,
+    );
+    vi.mocked(getTransactionsCount).mockImplementation(async (datasetId?: string) =>
+      datasetId ? transactions.filter(t => t.datasetId === datasetId).length : transactions.length,
+    );
   });
 
   afterEach(() => {
@@ -195,3 +219,143 @@ describe('datasets seller dashboard auth', () => {
   });
 });
 
+const VALID_WALLET = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5';
+
+const validDatasetBody = {
+  name: 'Test Dataset',
+  description: 'A dataset for testing wallet validation',
+  type: 'trading-signals',
+  pricePerQuery: 1.5,
+  sellerWallet: VALID_WALLET,
+  data: { key: 'value' },
+};
+
+describe('wallet address validation on POST /api/datasets', () => {
+  let app: Express;
+  const originalApiKey = process.env.API_KEY;
+  const originalSellerJwtSecret = process.env.SELLER_JWT_SECRET;
+
+  beforeEach(async () => {
+    app = makeApp();
+    process.env.API_KEY = 'test-api-key';
+    process.env.SELLER_JWT_SECRET = 'test-secret';
+    vi.mocked(getAllDatasets).mockResolvedValue([]);
+    vi.mocked(getDataset).mockResolvedValue(undefined);
+    vi.mocked(getTransactions).mockResolvedValue([]);
+    vi.mocked(getTransactionsCount).mockResolvedValue(0);
+    vi.mocked(addDataset).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    if (originalApiKey === undefined) {
+      delete process.env.API_KEY;
+    } else {
+      process.env.API_KEY = originalApiKey;
+    }
+
+    if (originalSellerJwtSecret === undefined) {
+      delete process.env.SELLER_JWT_SECRET;
+    } else {
+      process.env.SELLER_JWT_SECRET = originalSellerJwtSecret;
+    }
+  });
+
+  it('returns 401 when the auth token is missing', async () => {
+    const res = await request(app).post('/api/v1/datasets').send(validDatasetBody);
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('Authorization header');
+  });
+
+  it('accepts a valid 56-char G-address and creates the dataset', async () => {
+    mockIsValidStellarAddress.mockReturnValue(true);
+
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send(validDatasetBody);
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+    expect(res.body.dataset.sellerWallet).toBe(VALID_WALLET);
+  });
+
+  it('accepts a seller JWT when the wallet matches the request body', async () => {
+    mockIsValidStellarAddress.mockReturnValue(true);
+
+    const token = signSellerJwt({
+      sellerWallet: VALID_WALLET,
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', `Bearer ${token}`)
+      .send(validDatasetBody);
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('rejects a seller JWT when the wallet does not match the request body', async () => {
+    mockIsValidStellarAddress.mockReturnValue(true);
+
+    const token = signSellerJwt({
+      sellerWallet: SELLER_A,
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', `Bearer ${token}`)
+      .send(validDatasetBody);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain('does not match');
+  });
+
+  it('rejects a wallet address that is too short', async () => {
+    mockIsValidStellarAddress.mockReturnValue(false);
+
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send({ ...validDatasetBody, sellerWallet: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFL' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Invalid Stellar address');
+  });
+
+  it('rejects a wallet address that does not start with G', async () => {
+    mockIsValidStellarAddress.mockReturnValue(false);
+
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send({ ...validDatasetBody, sellerWallet: 'XBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Invalid Stellar address');
+  });
+
+  it('rejects a wallet address that fails the Stellar SDK checksum check', async () => {
+    mockIsValidStellarAddress.mockReturnValue(false);
+
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send({ ...validDatasetBody, sellerWallet: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Invalid Stellar address');
+  });
+
+  it('calls StrKey.isValidEd25519PublicKey with the submitted wallet address', async () => {
+    mockIsValidStellarAddress.mockReturnValue(true);
+
+    await request(app).post('/api/v1/datasets').set('Authorization', 'Bearer test-api-key').send(validDatasetBody);
+
+    expect(mockIsValidStellarAddress).toHaveBeenCalledWith(VALID_WALLET);
+  });
+});

@@ -14,11 +14,11 @@ import {
   Check,
   RotateCcw,
 } from 'lucide-react';
-import { api, DatasetMeta } from '../lib/api';
+import { api, DatasetMeta, PaginatedDatasets } from '../lib/api';
 import { DATA_TYPE_META } from '../lib/utils';
 import DatasetCard from '../components/ui/DatasetCard';
 import QueryModal from '../components/ui/QueryModal';
-import { DatasetCardSkeleton } from '../components/ui/SkeletonLoader';
+import { DatasetCardSkeleton, Skeleton } from '../components/ui/SkeletonLoader';
 import clsx from 'clsx';
 import { useI18n } from '../i18n';
 import { useTransactionWebSocket } from '../hooks/useTransactionWebSocket';
@@ -26,17 +26,19 @@ import { WebSocketStatus } from '../components/ui/WebSocketStatus';
 
 export default function MarketplacePage() {
   const { locale, t } = useI18n();
-  /** Raw input value — updated on every keystroke. */
-  const [searchInput, setSearchInput] = useState('');
-  /** Debounced value used in the query — updated 400 ms after typing stops. */
-  const [search, setSearch] = useState('');
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [minPrice, setMinPrice] = useState('');
-  const [maxPrice, setMaxPrice] = useState('');
-  const [minQueries, setMinQueries] = useState('');
-  const [sort, setSort] = useState('popular');
   const [searchParams, setSearchParams] = useSearchParams();
-  const pageSize = 20;
+  
+  // Initialize state from URL parameters
+  const [searchInput, setSearchInput] = useState(searchParams.get('q') || '');
+  const [search, setSearch] = useState(searchParams.get('q') || '');
+  const [selectedTypes, setSelectedTypes] = useState<string[]>(
+    searchParams.get('types')?.split(',').filter(Boolean) || []
+  );
+  const [minPrice, setMinPrice] = useState(searchParams.get('minPrice') || '');
+  const [maxPrice, setMaxPrice] = useState(searchParams.get('maxPrice') || '');
+  const [minQueries, setMinQueries] = useState(searchParams.get('minQueries') || '');
+  const [sort, setSort] = useState(searchParams.get('sort') || 'popular');
+  
   const pageParam = parseInt(searchParams.get('page') || '1', 10);
   const page = Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : 1;
   const setPage = (nextPage: number) => {
@@ -45,6 +47,7 @@ export default function MarketplacePage() {
     setSearchParams(updatedParams);
   };
   const [selectedDataset, setSelectedDataset] = useState<DatasetMeta | null>(null);
+  const requestedPageSize = 12;
 
   // Debounce: only update the query key 400 ms after the user stops typing.
   useEffect(() => {
@@ -52,16 +55,63 @@ export default function MarketplacePage() {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  // Sync filter state to URL parameters
+  useEffect(() => {
+    const updatedParams = new URLSearchParams(searchParams);
+    
+    // Update search query
+    if (search) {
+      updatedParams.set('q', search);
+    } else {
+      updatedParams.delete('q');
+    }
+    
+    // Update type filters
+    if (selectedTypes.length > 0) {
+      updatedParams.set('types', selectedTypes.join(','));
+    } else {
+      updatedParams.delete('types');
+    }
+    
+    // Update price range
+    if (minPrice) {
+      updatedParams.set('minPrice', minPrice);
+    } else {
+      updatedParams.delete('minPrice');
+    }
+    if (maxPrice) {
+      updatedParams.set('maxPrice', maxPrice);
+    } else {
+      updatedParams.delete('maxPrice');
+    }
+    
+    // Update min queries
+    if (minQueries) {
+      updatedParams.set('minQueries', minQueries);
+    } else {
+      updatedParams.delete('minQueries');
+    }
+    
+    // Update sort
+    updatedParams.set('sort', sort);
+    
+    // Only update if params changed to avoid infinite loop
+    const paramString = updatedParams.toString();
+    if (paramString !== searchParams.toString()) {
+      setSearchParams(updatedParams);
+    }
+  }, [search, selectedTypes, minPrice, maxPrice, minQueries, sort, searchParams, setSearchParams]);
+
   const {
     data,
     isLoading: loading,
     refetch,
-  } = useQuery({
+  } = useQuery<PaginatedDatasets>({
     queryKey: ['datasets', page, search, selectedTypes, minPrice, maxPrice, minQueries, sort],
     queryFn: () =>
       api.getDatasets({
         page,
-        limit: pageSize,
+        limit: requestedPageSize,
         search,
         types: selectedTypes,
         minPrice: minPrice ? Number(minPrice) : undefined,
@@ -73,12 +123,13 @@ export default function MarketplacePage() {
 
   const datasets = data?.data || [];
   const total = data?.total || 0;
+  const pageSize = data?.pageSize || requestedPageSize;
   const totalPages = data?.totalPages || 1;
 
   // WebSocket connection for real-time updates
   const { connected: wsConnected, error: wsError } = useTransactionWebSocket(
     {
-      datasetIds: datasets.map(d => d.id),
+      datasetIds: datasets.map((d: DatasetMeta) => d.id),
       enabled: datasets.length > 0,
     },
     {
@@ -95,7 +146,17 @@ export default function MarketplacePage() {
       updatedParams.set('page', '1');
       setSearchParams(updatedParams);
     }
-  }, [search, sort, selectedTypes, minPrice, maxPrice, minQueries, page, searchParams, setSearchParams]);
+  }, [
+    search,
+    sort,
+    selectedTypes,
+    minPrice,
+    maxPrice,
+    minQueries,
+    page,
+    searchParams,
+    setSearchParams,
+  ]);
 
   const currentPage = Math.min(page, totalPages);
 
@@ -122,8 +183,8 @@ export default function MarketplacePage() {
     selectedTypes.length > 0 || Boolean(minPrice || maxPrice || minQueries || searchInput);
 
   const toggleTypeFilter = (type: string) => {
-    setSelectedTypes(current =>
-      current.includes(type) ? current.filter(value => value !== type) : [...current, type],
+    setSelectedTypes((current: string[]) =>
+      current.includes(type) ? current.filter((value: string) => value !== type) : [...current, type],
     );
   };
 
@@ -134,6 +195,7 @@ export default function MarketplacePage() {
     setMinPrice('');
     setMaxPrice('');
     setMinQueries('');
+    setSort('popular');
     setPage(1);
   };
 
@@ -186,7 +248,7 @@ export default function MarketplacePage() {
                 type="text"
                 placeholder={t('marketplace.searchPlaceholder')}
                 value={searchInput}
-                onChange={e => setSearchInput(e.target.value)}
+                onChange={(e) => setSearchInput(e.target.value)}
                 className="w-full bg-void/60 border border-border/60 rounded-xl pl-11 pr-4 py-3 text-sm font-body text-foreground placeholder:text-muted focus:outline-none focus:border-gold/40 transition-colors"
               />
               {searchInput && (
@@ -279,7 +341,7 @@ export default function MarketplacePage() {
                       'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-body font-medium transition-all duration-200',
                       isSelected
                         ? 'bg-gold text-void'
-                        : `${meta?.bg} ${meta?.color} hover:opacity-80`,
+                        : `${meta?.bg || ''} ${meta?.color || ''} hover:opacity-80`,
                     )}
                   >
                     {isSelected && <Check className="w-3 h-3" aria-hidden="true" />}
@@ -314,34 +376,37 @@ export default function MarketplacePage() {
         </div>
 
         {/* Results count */}
-        <div className="flex items-center justify-between mb-6">
-          <p className="text-sm text-foreground-muted font-body">
-            {loading ? (
-              t('common.labels.loading')
-            ) : (
-              <>
-                {t('marketplace.pagination.showing', {
-                  start: pageStart.toLocaleString(locale),
-                  end: pageEnd.toLocaleString(locale),
-                  total: total.toLocaleString(locale),
-                })}
-              </>
-            )}
-          </p>
-          {!loading && datasets.length > 0 && (
+        <div className="flex items-center justify-between gap-4 mb-6" aria-busy={loading}>
+          {loading ? (
+            <div className="space-y-2">
+              <Skeleton variant="text" width={240} height={16} />
+              <Skeleton variant="text" width={160} height={12} />
+            </div>
+          ) : (
+            <p className="text-sm text-foreground-muted font-body">
+              {t('marketplace.pagination.showing', {
+                start: pageStart.toLocaleString(locale),
+                end: pageEnd.toLocaleString(locale),
+                total: total.toLocaleString(locale),
+              })}
+            </p>
+          )}
+          {loading ? (
+            <Skeleton variant="text" width={88} height={14} />
+          ) : datasets.length > 0 ? (
             <p className="text-sm text-foreground-muted font-body">
               {t('marketplace.pagination.page', {
                 current: currentPage.toLocaleString(locale),
                 total: totalPages.toLocaleString(locale),
               })}
             </p>
-          )}
+          ) : null}
         </div>
 
         {/* Grid */}
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {Array.from({ length: 6 }).map((_, i) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" aria-busy="true">
+            {Array.from({ length: 8 }).map((_, i) => (
               <DatasetCardSkeleton key={i} />
             ))}
           </div>
@@ -369,7 +434,7 @@ export default function MarketplacePage() {
               <div className="mt-10 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <button
                   type="button"
-                  onClick={() => setPage(currentPage - 1)}
+                  onClick={() => setPage(Math.max(1, currentPage - 1))}
                   disabled={currentPage === 1}
                   aria-label={t('marketplace.pagination.previous')}
                   className={clsx(
@@ -403,7 +468,7 @@ export default function MarketplacePage() {
 
                 <button
                   type="button"
-                  onClick={() => setPage(currentPage + 1)}
+                  onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
                   disabled={currentPage === totalPages}
                   aria-label={t('marketplace.pagination.next')}
                   className={clsx(

@@ -1,5 +1,6 @@
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { getCircuitBreaker } from '../common/circuit-breaker';
+import { domainMetrics } from '../common/datadog';
 import { HORIZON_URL, USDC_ISSUER } from '../lib/stellar.config';
 
 const server = new StellarSdk.Horizon.Server(HORIZON_URL);
@@ -9,10 +10,8 @@ const stellarBreaker = getCircuitBreaker('stellar-horizon', {
   resetTimeoutMs: 60_000, // 60 s
 });
 
-// Configurable via env; default 10 seconds as specified by the maintainer
-function getStellarTimeoutMs(): number {
-  return parseInt(process.env.STELLAR_TIMEOUT_MS ?? '10000', 10);
-}
+// Configurable via env; read per-call so tests can override it after module load
+const getStellarTimeoutMs = () => parseInt(process.env.STELLAR_TIMEOUT_MS ?? '10000', 10);
 
 interface VerifyParams {
   txHash: string;
@@ -59,17 +58,51 @@ export class StellarTimeoutError extends Error {
   }
 }
 
+/**
+ * Marker class for errors whose message is safe to forward to the client as-is.
+ * Only throw this for messages written by us — never wrap a raw SDK or library error.
+ */
+export class PaymentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaymentError';
+  }
+}
+
+async function withHorizonRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const maxAttempts = 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const is404 =
+        err &&
+        typeof err === 'object' &&
+        'response' in err &&
+        (err as { response?: { status?: number } }).response?.status === 404;
+      if (is404 && attempt < maxAttempts - 1) {
+        await new Promise(r => setTimeout(r, 1_000 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('unreachable');
+}
+
 export async function verifyStellarPayment(params: VerifyParams): Promise<VerifyResult> {
   const { txHash, expectedAmount, destinationAddress } = params;
 
   try {
     const [tx, ops] = await withStellarTimeout(
       () =>
-        stellarBreaker.execute(() =>
-          Promise.all([
-            server.transactions().transaction(txHash).call(),
-            server.operations().forTransaction(txHash).call(),
-          ]),
+        withHorizonRetry(() =>
+          stellarBreaker.execute(() =>
+            Promise.all([
+              server.transactions().transaction(txHash).call(),
+              server.operations().forTransaction(txHash).call(),
+            ]),
+          ),
         ),
       getStellarTimeoutMs(),
     );
@@ -81,6 +114,12 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     );
 
     if (paymentOps.length === 0) {
+      domainMetrics.stellarPaymentVerified({
+        datasetType: 'unknown',
+        mode: 'real',
+        status: 'failed',
+        reason: 'no_payment_found',
+      });
       return { valid: false, reason: 'No payment to escrow address found in transaction' };
     }
 
@@ -91,6 +130,12 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     });
 
     if (usdcOps.length === 0) {
+      domainMetrics.stellarPaymentVerified({
+        datasetType: 'unknown',
+        mode: 'real',
+        status: 'failed',
+        reason: 'no_usdc_found',
+      });
       return {
         valid: false,
         reason: 'No USDC payment found — ensure you sent USDC on Stellar testnet',
@@ -102,6 +147,12 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     const tolerance = 0.001; // 0.001 USDC tolerance
 
     if (Math.abs(actualAmount - expectedAmount) > tolerance) {
+      domainMetrics.stellarPaymentVerified({
+        datasetType: 'unknown',
+        mode: 'real',
+        status: 'failed',
+        reason: 'amount_mismatch',
+      });
       return {
         valid: false,
         reason: `Amount mismatch: expected ${expectedAmount} USDC, received ${actualAmount} USDC`,
@@ -113,8 +164,21 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     const txTime = new Date(tx.created_at).getTime();
     const now = Date.now();
     if (now - txTime > 300_000) {
+      domainMetrics.stellarPaymentVerified({
+        datasetType: 'unknown',
+        mode: 'real',
+        status: 'failed',
+        reason: 'transaction_expired',
+      });
       return { valid: false, reason: 'Transaction expired (older than 5 minutes)' };
     }
+
+    // Log successful verification
+    domainMetrics.stellarPaymentVerified({
+      datasetType: 'unknown',
+      mode: 'real',
+      status: 'verified',
+    });
 
     return {
       valid: true,
@@ -123,14 +187,25 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     };
   } catch (err: unknown) {
     if (err instanceof StellarTimeoutError) {
+      domainMetrics.stellarTimeout({ method: 'transaction' });
       throw err; // propagate the user-friendly timeout error as-is
     }
     if (err && typeof err === 'object' && 'response' in err) {
       const httpErr = err as { response?: { status?: number } };
       if (httpErr.response?.status === 404) {
+        domainMetrics.stellarPaymentVerified({
+          datasetType: 'unknown',
+          mode: 'real',
+          status: 'failed',
+          reason: 'transaction_not_found',
+        });
         return { valid: false, reason: 'Transaction not found on Stellar testnet' };
       }
     }
-    throw err;
+    // Log the full SDK error server-side but never forward it to the client —
+    // Stellar errors can contain sequence numbers, account IDs, and other internals.
+    logger.error('[Stellar] Unexpected Horizon error:', err);
+    throw new Error('Stellar network error — please try again shortly');
   }
 }
+\nimport { logger } from '../lib/logger';

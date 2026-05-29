@@ -7,6 +7,10 @@ import {
 } from './api';
 import { initEnv } from './env';
 
+vi.mock('./env', () => ({
+  getEnv: () => ({ apiUrl: 'http://localhost', apiKey: 'test', maxConcurrentRequests: 8 }),
+}));
+
 function createFetchResponse(body: unknown) {
   return {
     ok: true,
@@ -39,6 +43,7 @@ describe('api request throttling', () => {
             data: [],
             total: 0,
             page: 1,
+            pageSize: 20,
             totalPages: 1,
           }),
         );
@@ -54,6 +59,7 @@ describe('api request throttling', () => {
             data: [],
             total: 0,
             page: 1,
+            pageSize: 20,
             totalPages: 1,
           }),
         ),
@@ -105,6 +111,7 @@ describe('api request throttling', () => {
           data: [],
           total: 0,
           page: 1,
+          pageSize: 20,
           totalPages: 1,
         }),
       );
@@ -135,6 +142,7 @@ describe('api request throttling', () => {
           data: [],
           total: 0,
           page: 1,
+          pageSize: 20,
           totalPages: 1,
         }),
       ),
@@ -163,18 +171,19 @@ describe('api request throttling', () => {
     expect(url.searchParams.get('sort')).toBe('price-asc');
   });
 
-  it.skip('times out with friendly message for default API requests', async () => {
-    const fetchMock = vi.fn((_url: string, init?: RequestInit) =>
-      new Promise((_resolve, reject) => {
-        const signal = init?.signal as AbortSignal | undefined;
-        const abort = new Error('Aborted');
-        abort.name = 'AbortError';
-        if (signal?.aborted) {
-          reject(abort);
-          return;
-        }
-        signal?.addEventListener('abort', () => reject(abort));
-      }),
+  it('times out with friendly message for default API requests', async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal | undefined;
+          const abort = new Error('Aborted');
+          abort.name = 'AbortError';
+          if (signal?.aborted) {
+            reject(abort);
+            return;
+          }
+          signal?.addEventListener('abort', () => reject(abort));
+        }),
     );
 
     vi.stubGlobal('fetch', fetchMock);
@@ -188,18 +197,19 @@ describe('api request throttling', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it.skip('uses the agent timeout constant for agent AI requests', async () => {
-    const fetchMock = vi.fn((_url: string, init?: RequestInit) =>
-      new Promise((_resolve, reject) => {
-        const signal = init?.signal as AbortSignal | undefined;
-        const abort = new Error('Aborted');
-        abort.name = 'AbortError';
-        if (signal?.aborted) {
-          reject(abort);
-          return;
-        }
-        signal?.addEventListener('abort', () => reject(abort));
-      }),
+  it('uses the agent timeout constant for agent AI requests', async () => {
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          const signal = init?.signal as AbortSignal | undefined;
+          const abort = new Error('Aborted');
+          abort.name = 'AbortError';
+          if (signal?.aborted) {
+            reject(abort);
+            return;
+          }
+          signal?.addEventListener('abort', () => reject(abort));
+        }),
     );
 
     vi.stubGlobal('fetch', fetchMock);
@@ -211,6 +221,46 @@ describe('api request throttling', () => {
 
     await expect(agentPromise).rejects.toThrow('Request timed out — please try again');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/agent/research/demo');
+    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toContain('/agent/research/demo');
+  });
+});
+
+describe('api response validation', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-25T00:00:00Z'));
+    __resetRequestThrottleForTests();
+  });
+
+  afterEach(() => {
+    __resetRequestThrottleForTests();
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('throws ApiValidationError when response has unexpected shape', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      createFetchResponse({
+        success: true,
+        data: [
+          {
+            id: 'ds-1',
+            name: 'Bad Dataset',
+            // Missing 'type'
+            pricePerQuery: 'not a number', // Wrong type
+            sellerWallet: 'G123', // Too short
+            queriesServed: 0,
+            totalEarned: 0,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        total: 1,
+        page: 1,
+        totalPages: 1,
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(api.getDatasets()).rejects.toThrow('Unexpected API shape:');
   });
 });

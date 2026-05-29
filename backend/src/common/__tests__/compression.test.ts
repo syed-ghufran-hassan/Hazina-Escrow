@@ -12,7 +12,8 @@ import { createCompressionMiddleware } from '../compression';
  * decompression, so we can assert on the actual compressed output.
  */
 function rawParser(
-  res: import('http').IncomingMessage,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  res: any,
   cb: (err: Error | null, body: Buffer) => void,
 ): void {
   const chunks: Buffer[] = [];

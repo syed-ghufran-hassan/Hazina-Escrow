@@ -1,19 +1,32 @@
 import { v4 as uuidv4 } from 'uuid';
-import { getAllDatasets, getDataset, updateDataset, addTransaction, txHashUsed } from '../common/storage';
+import {
+  getAllDatasets,
+  getDataset,
+  updateDataset,
+  addTransaction,
+  txHashUsed,
+  getAgentJobByTxHash,
+} from '../common/storage';
 import { verifyStellarPayment } from '../payments/stellar.service';
 import { sendUsdcPayment, getAgentPublicKey } from './agent.wallet';
-import { synthesizeResearch, parseRiskTolerance, parseBudget, ResearchReport } from '../ai/research.service';
+import {
+  synthesizeResearch,
+  parseRiskTolerance,
+  parseBudget,
+  ResearchReport,
+} from '../ai/research.service';
 import { notifySeller } from '../webhooks/webhook.service';
+import { domainMetrics } from '../common/datadog';
 
 // Fee the agent charges the human (1 USDC flat)
 export const AGENT_FEE_USDC = 1;
 
 // Dataset types the agent purchases and their roles in the report
 export const SELLER_TYPES = [
-  { type: 'yield-data',    role: 'yieldData',     description: 'APY & protocol data' },
-  { type: 'whale-wallets', role: 'whaleData',     description: 'Whale wallet movements' },
-  { type: 'risk-scores',   role: 'riskData',      description: 'Protocol risk scores' },
-  { type: 'sentiment',     role: 'sentimentData', description: 'Social market sentiment' },
+  { type: 'yield-data', role: 'yieldData', description: 'APY & protocol data' },
+  { type: 'whale-wallets', role: 'whaleData', description: 'Whale wallet movements' },
+  { type: 'risk-scores', role: 'riskData', description: 'Protocol risk scores' },
+  { type: 'sentiment', role: 'sentimentData', description: 'Social market sentiment' },
 ] as const;
 
 export interface AgentJob {
@@ -28,6 +41,23 @@ export interface AgentJob {
   agentProfit: number;
   report: ResearchReport;
   timestamp: string;
+}
+
+/**
+ * Returned by runResearchAgent when the supplied txHash has already been
+ * successfully processed.  The caller should surface this as HTTP 200 with
+ * an `idempotent: true` flag so clients can distinguish a replay hit from a
+ * genuine error.
+ */
+export interface IdempotentJobResult {
+  idempotent: true;
+  txHash: string;
+  /** Original query text stored when the job was first processed. */
+  query: string | undefined;
+  /** AI analysis text from the original job, if available. */
+  cachedSummary: string | undefined;
+  /** ISO timestamp of the original job. */
+  originalTimestamp: string | undefined;
 }
 
 export interface PurchaseRecord {
@@ -46,11 +76,25 @@ export interface PurchaseRecord {
  */
 export async function runResearchAgent(
   query: string,
-  humanTxHash: string
-): Promise<AgentJob> {
-  // 1. Verify human's 1 USDC payment to escrow wallet
+  humanTxHash: string,
+): Promise<AgentJob | IdempotentJobResult> {
+  // 1. Idempotency guard — if this txHash was already processed, return the
+  //    cached result so callers can surface it as HTTP 200 rather than an error.
   if (await txHashUsed(humanTxHash)) {
-    throw new Error('Transaction hash already used');
+    const existing = await getAgentJobByTxHash(humanTxHash);
+    
+    if (!existing) {
+      throw new Error('Transaction hash already used');
+    }
+
+    const result: IdempotentJobResult = {
+      idempotent: true,
+      txHash: humanTxHash,
+      query: existing.buyerQuery,
+      cachedSummary: existing.aiSummary,
+      originalTimestamp: existing.timestamp,
+    };
+    return result;
   }
 
   const escrowWallet = process.env.ESCROW_WALLET;
@@ -63,8 +107,17 @@ export async function runResearchAgent(
   });
 
   if (!verification.valid) {
+    domainMetrics.agentHumanPaymentVerified({
+      mode: 'real',
+      status: 'failed',
+    });
     throw new Error(verification.reason || 'Human payment verification failed');
   }
+
+  domainMetrics.agentHumanPaymentVerified({
+    mode: 'real',
+    status: 'verified',
+  });
 
   return _executeResearch(query, humanTxHash, false);
 }
@@ -81,7 +134,7 @@ export async function runResearchAgentDemo(query: string): Promise<AgentJob> {
 async function _executeResearch(
   query: string,
   humanTxHash: string,
-  demo: boolean
+  demo: boolean,
 ): Promise<AgentJob> {
   const jobId = `job-${uuidv4()}`;
   const budget = parseBudget(query);
@@ -96,9 +149,9 @@ async function _executeResearch(
   let totalSpent = 0;
 
   for (const seller of SELLER_TYPES) {
-    const dataset = allDatasets.find((d) => d.type === seller.type);
+    const dataset = allDatasets.find(d => d.type === seller.type);
     if (!dataset) {
-      console.warn(`[Agent] No dataset found for type: ${seller.type}`);
+      logger.warn(`[Agent] No dataset found for type: ${seller.type}`);
       collectedData[seller.role] = {};
       continue;
     }
@@ -108,12 +161,12 @@ async function _executeResearch(
     if (demo) {
       // Demo: simulate payment, read data directly
       txHash = `demo-${seller.type}-${Date.now()}`;
-      console.log(
+      logger.info(
         `[Agent][Demo] Simulating payment of ${dataset.pricePerQuery} USDC → ${dataset.sellerWallet} for ${dataset.name}`,
       );
     } else {
       // Real: send USDC from agent wallet → seller wallet
-      console.log(
+      logger.info(
         `[Agent] Paying ${dataset.pricePerQuery} USDC → ${dataset.sellerWallet} for ${dataset.name}`,
       );
       const payment = await sendUsdcPayment({
@@ -137,6 +190,13 @@ async function _executeResearch(
 
     totalSpent += dataset.pricePerQuery;
 
+    // Track agent dataset purchase
+    domainMetrics.agentDatasetPurchase({
+      datasetType: dataset.type,
+      mode: demo ? 'demo' : 'real',
+      amountPaid: dataset.pricePerQuery,
+    });
+
     // Update dataset stats
     await updateDataset(dataset.id, {
       queriesServed: dataset.queriesServed + 1,
@@ -151,7 +211,6 @@ async function _executeResearch(
       amount: dataset.pricePerQuery,
       sellerPaid: true,
       sellerAmount: parseFloat((dataset.pricePerQuery * 0.95).toFixed(7)),
-      sellerTxHash: txHash,
       buyerQuery: `[Agent Job ${jobId}] ${query}`,
       timestamp: new Date().toISOString(),
     });
@@ -166,6 +225,12 @@ async function _executeResearch(
       agentJobId: jobId,
       demo,
     }).catch(() => {});
+
+    domainMetrics.datasetQueried({
+      datasetType: dataset.type,
+      mode: demo ? 'demo' : 'real',
+      source: 'agent',
+    });
 
     // Read the actual data
     const fresh = await getDataset(dataset.id);
@@ -184,10 +249,10 @@ async function _executeResearch(
     userQuery: query,
     budget,
     riskTolerance,
-    yieldData:     collectedData['yieldData']     ?? {},
-    whaleData:     collectedData['whaleData']      ?? {},
-    riskData:      collectedData['riskData']       ?? {},
-    sentimentData: collectedData['sentimentData']  ?? {},
+    yieldData: collectedData['yieldData'] ?? {},
+    whaleData: collectedData['whaleData'] ?? {},
+    riskData: collectedData['riskData'] ?? {},
+    sentimentData: collectedData['sentimentData'] ?? {},
     datasetCosts,
   });
 
@@ -201,6 +266,13 @@ async function _executeResearch(
     buyerQuery: query,
     aiSummary: report.rawAnalysis,
     timestamp: new Date().toISOString(),
+  });
+
+  domainMetrics.agentJobCompleted({
+    mode: demo ? 'demo' : 'real',
+    status: 'completed',
+    datasetsQueried: purchases.length,
+    totalSpent: totalSpent,
   });
 
   return {
@@ -217,3 +289,4 @@ async function _executeResearch(
     timestamp: new Date().toISOString(),
   };
 }
+\nimport { logger } from '../lib/logger';

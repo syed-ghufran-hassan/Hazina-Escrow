@@ -1,4 +1,3 @@
-/* eslint-disable prefer-node-protocol,sonarjs/cognitive-complexity */
 import { promises as fs } from 'node:fs';
 import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
@@ -35,12 +34,13 @@ interface TransactionFromJSON {
   timestamp: string;
 }
 
-async function seedDatasets(jsonData: any): Promise<void> {
+async function seedDatasets(jsonData: Record<string, unknown>): Promise<void> {
   if (!jsonData.datasets || !Array.isArray(jsonData.datasets)) {
     return;
   }
 
   for (const dataset of jsonData.datasets as DatasetFromJSON[]) {
+    const existing = await db.select().from(datasets).where(eq(datasets.id, dataset.id)).limit(1);
     const existing = await db
       .select()
       // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
@@ -49,7 +49,7 @@ async function seedDatasets(jsonData: any): Promise<void> {
       .limit(1);
 
     if (existing.length > 0) {
-      console.log(`⊘ Dataset already exists: ${dataset.id}`);
+      logger.info(`⊘ Dataset already exists: ${dataset.id}`);
       continue;
     }
 
@@ -66,11 +66,11 @@ async function seedDatasets(jsonData: any): Promise<void> {
       totalEarned: dataset.totalEarned.toString(),
       createdAt: dataset.createdAt,
     });
-    console.log(`✓ Inserted dataset: ${dataset.id}`);
+    logger.info(`✓ Inserted dataset: ${dataset.id}`);
   }
 }
 
-async function seedTransactions(jsonData: any): Promise<void> {
+async function seedTransactions(jsonData: Record<string, unknown>): Promise<void> {
   if (!jsonData.transactions || !Array.isArray(jsonData.transactions)) {
     return;
   }
@@ -84,7 +84,7 @@ async function seedTransactions(jsonData: any): Promise<void> {
       .limit(1);
 
     if (existing.length > 0) {
-      console.log(`⊘ Transaction already exists: ${tx.txHash}`);
+      logger.info(`⊘ Transaction already exists: ${tx.txHash}`);
       continue;
     }
 
@@ -98,7 +98,7 @@ async function seedTransactions(jsonData: any): Promise<void> {
       aiSummary: tx.aiSummary || null,
       timestamp: tx.timestamp,
     });
-    console.log(`✓ Inserted transaction: ${tx.txHash}`);
+    logger.info(`✓ Inserted transaction: ${tx.txHash}`);
   }
 }
 
@@ -108,17 +108,18 @@ async function seed(): Promise<void> {
     const fileContent = await fs.readFile(dataPath, 'utf-8');
     const jsonData = JSON.parse(fileContent);
 
-    console.log('Seeding database...');
+    logger.info('Seeding database...');
 
     await seedDatasets(jsonData);
     await seedTransactions(jsonData);
 
-    console.log('Seeding complete!');
+    logger.info('Seeding complete!');
     process.exit(0);
   } catch (error) {
-    console.error('Seed error:', error);
+    logger.error('Seed error:', error);
     process.exit(1);
   }
 }
 
 seed();
+\nimport { logger } from '../lib/logger';

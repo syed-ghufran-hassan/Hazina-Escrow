@@ -23,6 +23,14 @@ vi.mock('../../webhooks/webhook.service', () => ({
   notifySeller: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock('../../common/datadog', () => ({
+  domainMetrics: {
+    paymentVerified: vi.fn(),
+    datasetQueried: vi.fn(),
+    agentJobCompleted: vi.fn(),
+  },
+}));
+
 vi.mock('../../common/storage', async importOriginal => {
   const actual = await importOriginal<typeof import('../../common/storage')>();
   return {
@@ -43,6 +51,7 @@ import { generateDataSummary } from '../../ai/claude.service';
 import { getDataset, txHashUsed } from '../../common/storage';
 import type { Dataset } from '../../common/storage';
 import { verifyStellarPayment } from '../stellar.service';
+import { domainMetrics } from '../../common/datadog';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -154,6 +163,16 @@ describe('POST /api/v1/payments/verify/:id', () => {
       expectedAmount: 1,
       destinationAddress: SELLER_WALLET,
     });
+    expect(domainMetrics.paymentVerified).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'real',
+      status: 'delivered',
+    });
+    expect(domainMetrics.datasetQueried).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'real',
+      source: 'buyer',
+    });
   });
 
   it('returns 202 and records delivery failure when AI summary throws', async () => {
@@ -178,6 +197,12 @@ describe('POST /api/v1/payments/verify/:id', () => {
     expect(res.body.warning).toBe('DELIVERY_PENDING_RETRY');
     expect(res.body.transaction.status).toBe('delivery_failed');
     expect(res.body.transaction.deliveryStatus).toBe('failed');
+    expect(domainMetrics.paymentVerified).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'real',
+      status: 'pending',
+    });
+    expect(domainMetrics.datasetQueried).not.toHaveBeenCalled();
   });
 });
 
@@ -206,6 +231,16 @@ describe('POST /api/v1/payments/verify/:id/demo', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.demo).toBe(true);
     expect(res.body.ai.summary).toBe('Demo summary');
+    expect(domainMetrics.paymentVerified).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'demo',
+      status: 'delivered',
+    });
+    expect(domainMetrics.datasetQueried).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'demo',
+      source: 'buyer',
+    });
   });
 
   it('returns 404 when dataset does not exist', async () => {
