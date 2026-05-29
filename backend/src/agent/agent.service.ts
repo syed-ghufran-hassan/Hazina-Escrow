@@ -16,6 +16,7 @@ import {
   ResearchReport,
 } from '../ai/research.service';
 import { notifySeller } from '../webhooks/webhook.service';
+import { domainMetrics } from '../common/datadog';
 
 // Fee the agent charges the human (1 USDC flat)
 export const AGENT_FEE_USDC = 1;
@@ -106,8 +107,17 @@ export async function runResearchAgent(
   });
 
   if (!verification.valid) {
+    domainMetrics.agentHumanPaymentVerified({
+      mode: 'real',
+      status: 'failed',
+    });
     throw new Error(verification.reason || 'Human payment verification failed');
   }
+
+  domainMetrics.agentHumanPaymentVerified({
+    mode: 'real',
+    status: 'verified',
+  });
 
   return _executeResearch(query, humanTxHash, false);
 }
@@ -180,6 +190,13 @@ async function _executeResearch(
 
     totalSpent += dataset.pricePerQuery;
 
+    // Track agent dataset purchase
+    domainMetrics.agentDatasetPurchase({
+      datasetType: dataset.type,
+      mode: demo ? 'demo' : 'real',
+      amountPaid: dataset.pricePerQuery,
+    });
+
     // Update dataset stats
     await updateDataset(dataset.id, {
       queriesServed: dataset.queriesServed + 1,
@@ -208,6 +225,12 @@ async function _executeResearch(
       agentJobId: jobId,
       demo,
     }).catch(() => {});
+
+    domainMetrics.datasetQueried({
+      datasetType: dataset.type,
+      mode: demo ? 'demo' : 'real',
+      source: 'agent',
+    });
 
     // Read the actual data
     const fresh = await getDataset(dataset.id);
@@ -243,6 +266,13 @@ async function _executeResearch(
     buyerQuery: query,
     aiSummary: report.rawAnalysis,
     timestamp: new Date().toISOString(),
+  });
+
+  domainMetrics.agentJobCompleted({
+    mode: demo ? 'demo' : 'real',
+    status: 'completed',
+    datasetsQueried: purchases.length,
+    totalSpent: totalSpent,
   });
 
   return {

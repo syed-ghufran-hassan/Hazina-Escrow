@@ -85,6 +85,12 @@ export async function deliverVerifiedPayment(params: {
     buyerQuery: buyerQuestion,
   }).catch(() => {});
 
+  domainMetrics.datasetQueried({
+    datasetType: dataset.type,
+    mode: txHash.startsWith('demo-') ? 'demo' : 'real',
+    source: 'buyer',
+  });
+
   return {
     success: true,
     data: dataset.data,
@@ -118,13 +124,15 @@ export async function markDeliveryFailure(params: {
 
   const message = error instanceof Error ? error.message : String(error);
   const existing = await getTransactionByHash(txHash);
+  const attempts = (existing?.deliveryAttempts ?? 0) + 1;
+
   await updateTransactionByHash(txHash, {
 //     status: 'delivery_failed',
 //     deliveryStatus: 'failed'
     status: "delivery_failed",
     deliveryStatus: "failed",
     deliveryError: message,
-    deliveryAttempts: (existing?.deliveryAttempts ?? 0) + 1,
+    deliveryAttempts: attempts,
     buyerQuery: buyerQuestion,
   });
 
@@ -133,6 +141,19 @@ export async function markDeliveryFailure(params: {
     buyerQuery: buyerQuestion,
     deliveryStatus: 'failed',
     error: message,
+  });
+
+  // Track delivery failure and retry attempt
+  domainMetrics.paymentDeliveryFailed({
+    datasetType: dataset.type,
+    mode: txHash.startsWith('demo-') ? 'demo' : 'real',
+    reason: message.toLowerCase().includes('ai') ? 'ai_error' : 'delivery_error',
+  });
+
+  domainMetrics.deliveryRetryAttempt({
+    datasetType: dataset.type,
+    mode: txHash.startsWith('demo-') ? 'demo' : 'real',
+    attempt: attempts,
   });
 
   return {
@@ -203,6 +224,12 @@ export async function processPayment(params: {
   });
 
   if (!verification.valid) {
+    const mode = txHash.startsWith('demo-') ? 'demo' : 'real';
+    domainMetrics.paymentVerificationError({
+      mode,
+      errorType: verification.reason?.toLowerCase().replace(/\s+/g, '_') || 'unknown',
+    });
+
     transactionEventEmitter.updateTransactionStatus(transactionId, dataset.id, 'failed', {
       error: verification.reason || 'Stellar payment verification failed',
     });
@@ -297,9 +324,20 @@ export async function processPayment(params: {
 
     transactionEventEmitter.queryDataset(transactionId, dataset.id, dataset.queriesServed + 1);
 
+    domainMetrics.paymentVerified({
+      datasetType: dataset.type,
+      mode: 'real',
+      status: 'delivered',
+    });
+
     return response;
   } catch (deliveryErr) {
     console.error('[Escrow] Delivery failed — queued for retry:', deliveryErr);
+    domainMetrics.paymentVerified({
+      datasetType: dataset.type,
+      mode: 'real',
+      status: 'pending',
+    });
     return await markDeliveryFailure({
       transactionId,
       txHash,

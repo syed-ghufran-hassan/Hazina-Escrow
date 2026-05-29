@@ -30,6 +30,7 @@ import {
 } from "./payout-retry.service";
 import { transactionEventEmitter } from "../websocket/transaction-events";
 import { requireAdminKey } from "../common/auth.middleware";
+import { domainMetrics } from "../common/datadog";
 import {
   deliverVerifiedPayment,
   markDeliveryFailure,
@@ -435,6 +436,32 @@ paymentsRouter.post(
       aiSummary: summary,
     });
 
+  domainMetrics.paymentVerified({
+    datasetType: dataset.type,
+    mode: "demo",
+    status: "delivered",
+  });
+  domainMetrics.datasetQueried({
+    datasetType: dataset.type,
+    mode: "demo",
+    source: "buyer",
+  });
+
+  return res.json({
+    success: true,
+    demo: true,
+    data: dataset.data,
+    ai: { summary, answer },
+    transaction: {
+      hash: `demo-${Date.now()}`,
+      status: "completed",
+      deliveryStatus: "delivered",
+      amount: dataset.pricePerQuery,
+      sellerReceived: parseFloat(sellerAmount.toFixed(4)),
+      platformFee: parseFloat(platformFee.toFixed(4)),
+    },
+  });
+});
     // Emit dataset queried event
     transactionEventEmitter.queryDataset(transactionId, dataset.id, dataset.queriesServed + 1);
 

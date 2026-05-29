@@ -238,7 +238,7 @@ const _swaggerDocs = swaggerJsdoc(swaggerOptions);
 // Health check with service monitoring
 const HEALTH_TIMEOUT_MS = 3000;
 
-type CheckResult = 'ok' | 'error';
+type CheckResult = 'ok' | 'error' | 'unavailable';
 
 async function withHealthTimeout(fn: () => Promise<CheckResult>): Promise<CheckResult> {
   return Promise.race<CheckResult>([
@@ -257,7 +257,11 @@ async function checkStorage(): Promise<CheckResult> {
 }
 
 async function checkAnthropic(): Promise<CheckResult> {
-  return process.env.ANTHROPIC_API_KEY ? 'ok' : 'error';
+  // Anthropic is optional; missing key is unavailable but not an error
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return 'unavailable';
+  }
+  return 'ok';
 }
 
 async function checkStellar(): Promise<CheckResult> {
@@ -284,10 +288,19 @@ app.get('/health', async (_req, res) => {
   ]);
 
   const checks = { storage, anthropic, stellar };
-  const allOk = storage === 'ok' && anthropic === 'ok' && stellar === 'ok';
 
-  res.status(allOk ? 200 : 503).json({
-    status: allOk ? 'ok' : 'degraded',
+  // Critical services — any error here means unhealthy
+  const criticalOk = storage === 'ok' && stellar === 'ok';
+
+  // Overall status — degraded if optional service (anthropic) unavailable
+  const allOk = criticalOk && anthropic === 'ok';
+  const status = allOk ? 'ok' : 'degraded';
+
+  // HTTP status code — only return 503 if critical services fail
+  const httpStatus = criticalOk ? 200 : 503;
+
+  res.status(httpStatus).json({
+    status,
     checks,
     timestamp: new Date().toISOString(),
   });

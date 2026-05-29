@@ -545,6 +545,12 @@ datasetsRouter.post(
 
     await addDataset(dataset);
 
+    // Track dataset creation
+    domainMetrics.datasetCreated({
+      datasetType: type,
+      pricePerQuery,
+    });
+
     // Notify seller via webhook
     notifySeller(dataset.sellerWallet, 'dataset.created', {
       datasetId: dataset.id,
