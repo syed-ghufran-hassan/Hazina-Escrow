@@ -30,6 +30,7 @@ import {
 } from "./payout-retry.service";
 import { transactionEventEmitter } from "../websocket/transaction-events";
 import { requireAdminKey } from "../common/auth.middleware";
+import { domainMetrics } from "../common/datadog";
 import {
   deliverVerifiedPayment,
   markDeliveryFailure,
@@ -243,12 +244,12 @@ export function startDeliveryRetryWorker(intervalMs = 60_000): void {
   }
 
   void retryFailedDeliveries().catch(error => {
-    console.error('[Escrow] Initial delivery retry run failed:', error);
+    logger.error('[Escrow] Initial delivery retry run failed:', error);
   });
 
   deliveryRetryWorker = setInterval(() => {
     void retryFailedDeliveries().catch(error => {
-      console.error('[Escrow] Delivery retry worker failed:', error);
+      logger.error('[Escrow] Delivery retry worker failed:', error);
     });
   }, intervalMs);
 }
@@ -272,11 +273,11 @@ export function stopDeliveryRetryWorker(): void {
         memo: `hazina-${dataset.id.slice(0, 10)}`,
       });
       sellerTxHash = payment.txHash;
-      console.log(
+      logger.info(
         `[Escrow] Paid seller ${sellerAmount} USDC → ${dataset.sellerWallet} (${sellerTxHash})`,
       );
     } catch (payErr) {
-      console.warn(
+      logger.warn(
         "[Escrow] Seller payment failed (data still delivered):",
         payErr instanceof Error ? payErr.message : payErr,
       );
@@ -309,6 +310,7 @@ paymentsRouter.post(
         buyerQuestion,
       });
 
+    if (!dataset) return res.status(404).json({ error: 'Dataset not found' });
     if (await txHashUsed(txHash)) {
       return res.status(400).json({ error: 'Escrow already processed' });
     }
@@ -321,9 +323,9 @@ paymentsRouter.post(
       });
 
 // GET /api/admin/payouts/stuck — list payouts requiring manual review
-paymentsRouter.get("/admin/payouts/stuck", requireAdminKey, (_req: Request, res: Response) => {
+paymentsRouter.get('/admin/payouts/stuck', requireAdminKey, async (_req: Request, res: Response) => {
   return res.json({
-    payouts: getManualReviewPayouts(),
+    payouts: await getManualReviewPayouts(),
   });
 });
 
@@ -341,16 +343,16 @@ paymentsRouter.get("/admin/payouts/stuck", requireAdminKey, (_req: Request, res:
       return res.status(400).json({ error: err.message });
     }
     // Unexpected error — log full details server-side, send nothing internal to client
-    console.error("[Verify] Unexpected error processing payment:", err);
+    logger.error("[Verify] Unexpected error processing payment:", err);
     return res.status(500).json({ error: "Payment verification failed — please try again" });
   }
 });
+
 
 // POST /api/verify/:id/demo — demo mode (skip Stellar check) for hackathon
 paymentsRouter.post("/verify/:id/demo", validateBody(verifyDemoSchema), async (req: Request, res: Response) => {
   const { buyerQuestion } = req.body as z.infer<typeof verifyDemoSchema>;
   const dataset = await getDataset(req.params.id);
-
       if (result.pendingDelivery) {
         return res.status(202).json(result);
       }
@@ -395,7 +397,7 @@ paymentsRouter.post(
       summary = result.summary;
       answer = result.answer;
     } catch (err) {
-      console.error('Demo mode AI error:', err);
+      logger.error('Demo mode AI error:', err);
       summary = 'Demo mode: AI summary unavailable. Set ANTHROPIC_API_KEY to enable.';
     }
 
@@ -435,6 +437,32 @@ paymentsRouter.post(
       aiSummary: summary,
     });
 
+  domainMetrics.paymentVerified({
+    datasetType: dataset.type,
+    mode: "demo",
+    status: "delivered",
+  });
+  domainMetrics.datasetQueried({
+    datasetType: dataset.type,
+    mode: "demo",
+    source: "buyer",
+  });
+
+  return res.json({
+    success: true,
+    demo: true,
+    data: dataset.data,
+    ai: { summary, answer },
+    transaction: {
+      hash: `demo-${Date.now()}`,
+      status: "completed",
+      deliveryStatus: "delivered",
+      amount: dataset.pricePerQuery,
+      sellerReceived: parseFloat(sellerAmount.toFixed(4)),
+      platformFee: parseFloat(platformFee.toFixed(4)),
+    },
+  });
+});
     // Emit dataset queried event
     transactionEventEmitter.queryDataset(transactionId, dataset.id, dataset.queriesServed + 1);
 
@@ -478,3 +506,4 @@ paymentsRouter.get(
     });
   },
 );
+\nimport { logger } from '../lib/logger';

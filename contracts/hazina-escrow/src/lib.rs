@@ -89,6 +89,8 @@ pub enum HazinaEscrowError {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+
+
 pub struct EscrowRecord {
     pub escrow_id: u64,
     pub dataset_id: String,
@@ -619,28 +621,12 @@ impl HazinaEscrow {
             Self::release_one(&env, &admin, escrow_id);
             i += 1;
         }
-        if record.refunded {
-            return Err(Error::AlreadyRefunded);
-        }
-        if !record.buyer_confirmed {
-            return Err(Error::BuyerNotConfirmed);
-        }
-        if env.ledger().timestamp() > record.deadline {
-            return Err(Error::Expired);
-        }
-
-        Self::distribute_locked_funds(&env, &admin, &mut record);
-        env.storage()
-            .persistent()
-            .set(&EscrowKey::Record(escrow_id), &record);
-        Ok(())
     }
 
     pub fn refund(env: Env, admin: Address, escrow_id: u64) {
         admin.require_auth();
         Self::assert_admin(&env, &admin);
         Self::assert_not_paused(&env);
-        let mut record = Self::read_escrow(&env, escrow_id)?;
 
         // Bump TTL before reading to prevent expiry during read
         env.storage().persistent().extend_ttl(
@@ -649,33 +635,17 @@ impl HazinaEscrow {
             ESCROW_BUMP_LEDGERS,
         );
 
+        let mut record = Self::read_escrow(&env, escrow_id).unwrap_or_else(|_| panic_with_error!(&env, HazinaEscrowError::EscrowNotFound));
 
-        let record: EscrowRecord = env
-            .storage()
-            .persistent()
-            .get(&EscrowKey::Record(escrow_id))
-            .expect("escrow not found");
-
-        assert!(!record.released, "already released");
-        assert!(!record.refunded, "already refunded");
-        let mut record = Self::read_escrow(&env, escrow_id);
         if record.released {
             panic_with_error!(&env, HazinaEscrowError::AlreadyReleased);
         }
         if record.refunded {
             panic_with_error!(&env, HazinaEscrowError::AlreadyRefunded);
         }
-        if env.ledger().timestamp() > record.deadline {
-            return Err(Error::Expired);
-        }
 
         let token_client = token::Client::new(&env, &record.token);
         token_client.transfer(&env.current_contract_address(), &record.buyer, &record.amount);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &record.buyer,
-            &record.amount,
-        );
 
         record.refunded = true;
         env.storage()
@@ -686,7 +656,6 @@ impl HazinaEscrow {
             (symbol_short!("refunded"),),
             (escrow_id, record.buyer, record.amount),
         );
-        Ok(())
     }
 
     pub fn claim_expired(env: Env, escrow_id: u64, seller: Address) -> Result<(), Error> {
@@ -964,6 +933,7 @@ mod tests {
         testutils::{Address as _, Ledger},
         testutils::Address as _,
         Bytes,
+
         token::{Client as TokenClient, StellarAssetClient},
         Address, Env, String,
     };
@@ -1653,6 +1623,28 @@ mod tests {
         client.pause(&admin);
         client.refund(&admin, &escrow_id);
     }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
+    fn test_unpause_requires_admin() {
+        let (env, client, admin, _buyer, _seller, _usdc) = setup();
+        let outsider = Address::generate(&env);
+        client.pause(&admin);
+        client.unpause(&outsider);
+    }
+
+    #[test]
+    fn test_get_escrow_works_while_paused() {
+        let (env, client, admin, buyer, seller, usdc) = setup();
+
+        let escrow_id = client.lock(
+            &buyer,
+            &seller,
+            &usdc,
+            &1_000_000,
+            &dataset_id(&env, "ds-read-while-paused"),
+        );
+
 
     #[test]
     #[should_panic(expected = "Error(Contract, #3)")]

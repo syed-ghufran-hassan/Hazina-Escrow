@@ -16,6 +16,7 @@ import {
   ResearchReport,
 } from '../ai/research.service';
 import { notifySeller } from '../webhooks/webhook.service';
+import { domainMetrics } from '../common/datadog';
 
 // Fee the agent charges the human (1 USDC flat)
 export const AGENT_FEE_USDC = 1;
@@ -106,8 +107,17 @@ export async function runResearchAgent(
   });
 
   if (!verification.valid) {
+    domainMetrics.agentHumanPaymentVerified({
+      mode: 'real',
+      status: 'failed',
+    });
     throw new Error(verification.reason || 'Human payment verification failed');
   }
+
+  domainMetrics.agentHumanPaymentVerified({
+    mode: 'real',
+    status: 'verified',
+  });
 
   return _executeResearch(query, humanTxHash, false);
 }
@@ -141,7 +151,7 @@ async function _executeResearch(
   for (const seller of SELLER_TYPES) {
     const dataset = allDatasets.find(d => d.type === seller.type);
     if (!dataset) {
-      console.warn(`[Agent] No dataset found for type: ${seller.type}`);
+      logger.warn(`[Agent] No dataset found for type: ${seller.type}`);
       collectedData[seller.role] = {};
       continue;
     }
@@ -151,12 +161,12 @@ async function _executeResearch(
     if (demo) {
       // Demo: simulate payment, read data directly
       txHash = `demo-${seller.type}-${Date.now()}`;
-      console.log(
+      logger.info(
         `[Agent][Demo] Simulating payment of ${dataset.pricePerQuery} USDC → ${dataset.sellerWallet} for ${dataset.name}`,
       );
     } else {
       // Real: send USDC from agent wallet → seller wallet
-      console.log(
+      logger.info(
         `[Agent] Paying ${dataset.pricePerQuery} USDC → ${dataset.sellerWallet} for ${dataset.name}`,
       );
       const payment = await sendUsdcPayment({
@@ -179,6 +189,13 @@ async function _executeResearch(
     });
 
     totalSpent += dataset.pricePerQuery;
+
+    // Track agent dataset purchase
+    domainMetrics.agentDatasetPurchase({
+      datasetType: dataset.type,
+      mode: demo ? 'demo' : 'real',
+      amountPaid: dataset.pricePerQuery,
+    });
 
     // Update dataset stats
     await updateDataset(dataset.id, {
@@ -208,6 +225,12 @@ async function _executeResearch(
       agentJobId: jobId,
       demo,
     }).catch(() => {});
+
+    domainMetrics.datasetQueried({
+      datasetType: dataset.type,
+      mode: demo ? 'demo' : 'real',
+      source: 'agent',
+    });
 
     // Read the actual data
     const fresh = await getDataset(dataset.id);
@@ -245,6 +268,13 @@ async function _executeResearch(
     timestamp: new Date().toISOString(),
   });
 
+  domainMetrics.agentJobCompleted({
+    mode: demo ? 'demo' : 'real',
+    status: 'completed',
+    datasetsQueried: purchases.length,
+    totalSpent: totalSpent,
+  });
+
   return {
     jobId,
     query,
@@ -259,3 +289,4 @@ async function _executeResearch(
     timestamp: new Date().toISOString(),
   };
 }
+\nimport { logger } from '../lib/logger';
