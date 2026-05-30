@@ -13,6 +13,9 @@ const ESCROW_BUMP_LEDGERS: u32 = 518_400;
 // Min TTL threshold in ledgers (~24h) - only bump if remaining TTL is below this
 const ESCROW_MIN_TTL: u32 = 17_280;
 
+// Minimum lock amount in stroops (1 stroop = 0.0000001 USDC)
+const MIN_LOCK_AMOUNT: i128 = 10_000; // 0.001 USDC
+
 const MAX_BASIS_POINTS: u32 = 10_000;
 const MAX_EXPIRY_SECONDS: u64 = 30 * 24 * 60 * 60;
 
@@ -755,7 +758,9 @@ impl HazinaEscrow {
                 .unwrap_or(admin.clone());
             token_client.transfer(&env.current_contract_address(), &treasury, &platform_cut);
     fn assert_valid_amount(env: &Env, amount: i128) {
-        assert!(amount > 0, "Amount must be greater than zero");
+        if amount < MIN_LOCK_AMOUNT {
+            panic_with_error!(env, HazinaEscrowError::InvalidAmount);
+        }
     }
 
     fn assert_valid_dataset_id(_env: &Env, dataset_id: &String) {
