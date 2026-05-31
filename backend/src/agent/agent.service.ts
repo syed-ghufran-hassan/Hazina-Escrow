@@ -18,8 +18,11 @@ import {
 import { notifySeller } from '../webhooks/webhook.service';
 import { domainMetrics } from '../common/datadog';
 
-// Fee the agent charges the human (1 USDC flat)
-export const AGENT_FEE_USDC = 1;
+// Fee the agent charges the human (1 USDC flat by default).
+// Override via AGENT_FEE_USDC environment variable (e.g. "2.5").
+const RAW_FEE = process.env.AGENT_FEE_USDC ?? '1';
+const PARSED_FEE = parseFloat(RAW_FEE);
+export const AGENT_FEE_USDC = Number.isFinite(PARSED_FEE) && PARSED_FEE >= 0 ? PARSED_FEE : 1;
 
 // Dataset types the agent purchases and their roles in the report
 export const SELLER_TYPES = [
