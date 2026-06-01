@@ -45,18 +45,18 @@ export function validateEnv(): EnvConfig {
     );
   }
 
-  const network = (envVars.VITE_STELLAR_NETWORK || 'testnet').trim().toLowerCase();
-  const maxRequestsRaw = parseInt(envVars.VITE_MAX_CONCURRENT_REQUESTS || '8', 10);
-
   return {
     apiUrl: String(envVars.VITE_API_URL).trim().replace(/\/+$/, ''),
     apiKey: String(envVars.VITE_API_KEY).trim(),
-    stellarNetwork: (network === 'mainnet' || network === 'public' ? 'public' : 'testnet') as
-      | 'testnet'
-      | 'public',
+    stellarNetwork: ((): 'testnet' | 'public' => {
+      const n = (envVars.VITE_STELLAR_NETWORK || 'testnet').trim().toLowerCase();
+      return n === 'mainnet' || n === 'public' ? 'public' : 'testnet';
+    })(),
     usdcIssuer: envVars.VITE_USDC_ISSUER?.trim(),
-    maxConcurrentRequests:
-      Number.isFinite(maxRequestsRaw) && maxRequestsRaw > 0 ? maxRequestsRaw : 8,
+    maxConcurrentRequests: (() => {
+      const raw = parseInt(envVars.VITE_MAX_CONCURRENT_REQUESTS || '8', 10);
+      return Number.isFinite(raw) && raw > 0 ? raw : 8;
+    })(),
   };
 }
 
