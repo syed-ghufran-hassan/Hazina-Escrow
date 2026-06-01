@@ -95,7 +95,7 @@ export const es: EnglishMessages = {
       dayAgo: 'hace {count} d',
     },
     errors: {
-      imageNotSupported: "Imagen no soportada",
+      imageNotSupported: 'Imagen no soportada',
     },
   },
   nav: {
@@ -104,7 +104,11 @@ export const es: EnglishMessages = {
     sell: 'Vender datos',
     dashboard: 'Panel',
     mobileMenu: 'Menú',
+    openMobileMenu: 'Abrir menú',
+    closeMobileMenu: 'Cerrar menú',
     brand: 'Hazina',
+    connectWallet: 'Conectar wallet',
+    disconnect: 'Desconectar',
   },
   dataTypes: {
     all: 'Todos los tipos',
@@ -251,6 +255,7 @@ export const es: EnglishMessages = {
         'Describe qué contiene tu dataset, cómo fue recopilado y por qué a los compradores les interesaría...',
       dataType: 'Tipo de dato',
       pricePerQuery: 'Precio / consulta (USDC)',
+      pricePerQueryError: 'El precio debe ser mayor que 0',
       quickPricePresets: 'Precios rápidos:',
       sellerWallet: 'Tu dirección Stellar',
       sellerWalletPlaceholder: 'G... (clave pública Stellar de 56 caracteres)',
@@ -303,6 +308,7 @@ export const es: EnglishMessages = {
     title: 'Panel',
     subtitle: 'Tus ganancias en tiempo real y el rendimiento de tus datasets.',
     loadError: 'No se pudo cargar el panel',
+    refreshing: 'Actualizando',
     allSellers: 'Todos los vendedores',
     stats: {
       totalEarned: 'USDC totales ganados',
@@ -353,6 +359,16 @@ export const es: EnglishMessages = {
     loading: 'Investigando...',
     errorTitle: 'Error del agente',
     rateLimitError: 'Demasiadas solicitudes — espera un momento antes de volver a intentarlo.',
+    minLengthError: 'La consulta debe tener al menos 5 caracteres.',
+    payAndResearch: 'Pagar {amount} USDC e investigar',
+    paidModeNote: 'Billetera conectada — paga {amount} USDC para investigación real en cadena',
+    runDemoInstead: 'Probar demo gratis',
+    payInstructions:
+      'Paga {amount} USDC con tu billetera y luego pega el hash de la transacción para ejecutar la investigación.',
+    payToAddress: 'Dirección de depósito del agente',
+    txReceived: 'Hash de transacción recibido — confirma para ejecutar la investigación.',
+    txPending: 'Completa el pago en tu billetera y luego pega el hash de la transacción abajo.',
+    confirmAndResearch: 'Confirmar e investigar',
     result: {
       topOpportunity: 'Mejor oportunidad',
       reasoning: 'Razonamiento',

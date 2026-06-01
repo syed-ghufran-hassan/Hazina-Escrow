@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   X,
@@ -26,9 +26,10 @@ interface Props {
   dataset: DatasetMeta;
   onClose: () => void;
   onSuccess: (updated: Partial<DatasetMeta> & { id: string }) => void;
+  isOpen?: boolean;
 }
 
-export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
+export default function QueryModal({ dataset, onClose, onSuccess, isOpen = true }: Props) {
   const { locale, t } = useI18n();
   const catalog = getCatalog(locale);
   const [step, setStep] = useState<Step>('details');
@@ -47,21 +48,39 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
   const [walletStatus, setWalletStatus] = useState('');
   const verifyTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(modalRef, step !== 'result' && step !== 'error');
+  const titleId = useId();
+  useFocusTrap(modalRef);
 
   const typeMeta = getTypeMeta(dataset.type);
   const typeLabel = typeMeta.labelKey ? t(typeMeta.labelKey) : typeMeta.label;
   const verifyingStages = catalog.queryModal.verifyingStages;
   const enableDemoMode = isDemoModeEnabled();
 
+  // Reset all state when the modal is (re)opened so stale results from a
+  // previous session never bleed through when the same component instance is
+  // reused across open/close cycles.
+  useEffect(() => {
+    if (isOpen) {
+      setStep('details');
+      setError('');
+      setTxHash('');
+      setBuyerQuestion('');
+      setResult(null);
+      setPaymentInfo(null);
+      setVerifyStage(0);
+      setWalletStatus('');
+      setUseDemoMode(false);
+    }
+  }, [isOpen]);
+
   // Fetch 402 payment details
   useEffect(() => {
-    if (step === 'payment' && !paymentInfo) {
+    if (isOpen && step === 'payment' && !paymentInfo) {
       api.initiateQuery(dataset.id).then(res => {
         if (res.payment) setPaymentInfo(res.payment);
       });
     }
-  }, [step, paymentInfo, dataset.id]);
+  }, [isOpen, step, paymentInfo, dataset.id]);
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -98,9 +117,10 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
       onSuccess({
         id: dataset.id,
         queriesServed: delivered || res.demo ? dataset.queriesServed + 1 : dataset.queriesServed,
-        totalEarned: res.demo || !delivered
-          ? dataset.totalEarned
-          : dataset.totalEarned + res.transaction.sellerReceived,
+        totalEarned:
+          res.demo || !delivered
+            ? dataset.totalEarned
+            : dataset.totalEarned + res.transaction.sellerReceived,
       });
     } catch (err: unknown) {
       clearVerifyTimer();
@@ -141,6 +161,8 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
     }
   }, [step, onClose]);
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -155,7 +177,8 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label={t('queryModal.details.title')}
+        aria-labelledby={titleId}
+        tabIndex={-1}
         className="relative w-full max-w-lg glass-card-gold overflow-hidden max-h-[90vh] overflow-y-auto"
       >
         {/* Gold top bar */}
@@ -170,7 +193,10 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
               <Zap className="w-3 h-3" />
               {typeLabel}
             </span>
-            <h2 className="font-display font-bold text-xl text-foreground leading-tight">
+            <h2
+              id={titleId}
+              className="font-display font-bold text-xl text-foreground leading-tight"
+            >
               {dataset.name}
             </h2>
           </div>
@@ -509,12 +535,14 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
           {/* ── RESULT ── */}
           {step === 'result' && result && (
             <div>
-              <div className={clsx(
-                'flex items-center gap-2 mb-4 p-3 rounded-xl border',
-                result.transaction.deliveryStatus === 'delivered'
-                  ? 'bg-emerald-500/10 border-emerald-500/25'
-                  : 'bg-amber-500/10 border-amber-500/25',
-              )}>
+              <div
+                className={clsx(
+                  'flex items-center gap-2 mb-4 p-3 rounded-xl border',
+                  result.transaction.deliveryStatus === 'delivered'
+                    ? 'bg-emerald-500/10 border-emerald-500/25'
+                    : 'bg-amber-500/10 border-amber-500/25',
+                )}
+              >
                 <ShieldCheck
                   className={clsx(
                     'w-5 h-5 flex-shrink-0',
@@ -546,7 +574,9 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
                   >
                     {result.transaction.hash.slice(0, 40)}...
                   </p>
-                  {result.warning && <p className="text-xs text-amber-300/80 font-body mt-1">{result.warning}</p>}
+                  {result.warning && (
+                    <p className="text-xs text-amber-300/80 font-body mt-1">{result.warning}</p>
+                  )}
                 </div>
               </div>
 

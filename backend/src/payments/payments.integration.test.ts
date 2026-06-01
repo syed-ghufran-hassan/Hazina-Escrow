@@ -51,13 +51,14 @@ const BASE_STORE: Store = {
   ],
   transactions: [],
   webhooks: [],
+  payoutFailures: [],
 };
 
 function makeApp(): Express {
   const app = express();
   app.use(express.json());
-  app.use('/api', paymentsRouter);
-  app.use('/api/agent', agentRouter);
+  app.use('/api/v1/payments', paymentsRouter);
+  app.use('/api/v1/agent', agentRouter);
   return app;
 }
 
@@ -89,23 +90,28 @@ describeSocket('payments and agent integration routes', () => {
     vi.restoreAllMocks();
     delete process.env.ESCROW_WALLET;
     delete process.env.ADMIN_API_KEY;
+
+    if (fs.existsSync(BACKUP_PATH)) {
+      fs.copyFileSync(BACKUP_PATH, DATA_PATH);
+      fs.unlinkSync(BACKUP_PATH);
+    }
     if (fs.existsSync(BACKUP_PATH)) { fs.copyFileSync(BACKUP_PATH, DATA_PATH); fs.unlinkSync(BACKUP_PATH); }
   });
 
-  it('POST /api/query/:id returns 404 for unknown dataset', async () => {
-    const r = await request(app).post('/api/query/does-not-exist').send({});
+  it('POST /api/v1/payments/query/:id returns 404 for unknown dataset', async () => {
+    const r = await request(app).post('/api/v1/payments/query/does-not-exist').send({});
     expect(r.status).toBe(404);
   });
 
-  it('POST /api/query/:id returns 402 for known dataset', async () => {
-    const r = await request(app).post('/api/query/ds-payment-1').send({});
+  it('POST /api/v1/payments/query/:id returns 402 for known dataset', async () => {
+    const r = await request(app).post('/api/v1/payments/query/ds-payment-1').send({});
     expect(r.status).toBe(402);
     expect(r.body.x402).toBe(true);
     expect(r.body.payment.amount).toBe(1);
   });
 
-  it('POST /api/verify/:id handles happy path', async () => {
-    const r = await request(app).post('/api/verify/ds-payment-1').send({ txHash: 'tx-happy', buyerQuestion: 'What changed?' });
+  it('POST /api/v1/payments/verify/:id handles happy path', async () => {
+    const r = await request(app).post('/api/v1/payments/verify/ds-payment-1').send({ txHash: 'tx-happy', buyerQuestion: 'What changed?' });
     expect(r.status).toBe(200);
     expect(r.body.success).toBe(true);
     expect(r.body.ai.summary).toBe('Executive summary');
@@ -119,46 +125,121 @@ describeSocket('payments and agent integration routes', () => {
     });
   });
 
+  it('persists failed seller payout for retries', async () => {
+    vi.mocked(sendUsdcPayment).mockRejectedValueOnce(new Error('temporary network error'));
+    const response = await request(app).post('/api/verify/ds-payment-1').send({
+      txHash: 'tx-failed-seller-payout',
+      buyerQuestion: 'What changed?',
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+
+    const persisted = JSON.parse(fs.readFileSync(DATA_PATH, 'utf-8')) as Store;
+    expect(persisted.payoutFailures).toHaveLength(1);
+    expect(persisted.payoutFailures[0]).toMatchObject({
+      datasetId: 'ds-payment-1',
+      buyerTxHash: 'tx-failed-seller-payout',
+      status: 'pending_retry',
+      retryCount: 0,
+    });
+  });
+
   it('POST /api/verify/:id rejects replayed transaction hash', async () => {
+    await writeStore({
+      ...BASE_STORE,
+      transactions: [
+        {
+          id: 'tx-replay',
+          datasetId: 'ds-payment-1',
+          txHash: 'tx-replayed',
+          amount: 1,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const response = await request(app).post('/api/verify/ds-payment-1').send({
+      txHash: 'tx-replayed',
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain('already used');
+    expect(verifyStellarPayment).not.toHaveBeenCalled();
+  it('POST /api/v1/payments/verify/:id rejects replayed transaction hash', async () => {
     await writeStore({ ...BASE_STORE, transactions: [{ id: 'tx-1', datasetId: 'ds-payment-1', txHash: 'tx-used', amount: 1, sellerPaid: true, timestamp: new Date().toISOString() }] });
-    const r = await request(app).post('/api/verify/ds-payment-1').send({ txHash: 'tx-used' });
+    const r = await request(app).post('/api/v1/payments/verify/ds-payment-1').send({ txHash: 'tx-used' });
     expect(r.status).toBe(400);
     expect(r.body.error).toContain('already processed');
   });
 
-  it('POST /api/verify/:id rejects wrong amount', async () => {
+  it('POST /api/v1/payments/verify/:id rejects wrong amount', async () => {
     vi.mocked(verifyStellarPayment).mockResolvedValueOnce({ valid: false, reason: 'Amount mismatch' });
-    const r = await request(app).post('/api/verify/ds-payment-1').send({ txHash: 'tx-wrong-amount' });
+    const r = await request(app).post('/api/v1/payments/verify/ds-payment-1').send({ txHash: 'tx-wrong-amount' });
     expect(r.status).toBe(400);
     expect(r.body.error).toContain('Amount mismatch');
   });
 
-  it('POST /api/verify/:id rejects expired transaction', async () => {
+  it('POST /api/v1/payments/verify/:id rejects expired transaction', async () => {
     vi.mocked(verifyStellarPayment).mockResolvedValueOnce({ valid: false, reason: 'Transaction expired' });
-    const r = await request(app).post('/api/verify/ds-payment-1').send({ txHash: 'tx-expired' });
+    const r = await request(app).post('/api/v1/payments/verify/ds-payment-1').send({ txHash: 'tx-expired' });
     expect(r.status).toBe(400);
     expect(r.body.error).toContain('expired');
   });
 
-  it('POST /api/verify/:id records failed seller payouts for reconciliation', async () => {
+  it('POST /api/v1/payments/verify/:id records failed seller payouts for reconciliation', async () => {
     vi.mocked(generateDataSummary).mockRejectedValueOnce(new Error('Claude unavailable'));
-    const r = await request(app).post('/api/verify/ds-payment-1').send({ txHash: 'tx-pending' });
+    const r = await request(app).post('/api/v1/payments/verify/ds-payment-1').send({ txHash: 'tx-pending' });
     expect(r.status).toBe(202);
     expect(r.body.pendingDelivery).toBe(true);
     expect(r.body.warning).toBe('DELIVERY_PENDING_RETRY');
     expect(r.body.transaction.deliveryStatus).toBe('failed');
   });
 
-  it('GET /api/admin/unpaid-sellers returns failed seller payouts', async () => {
+  it('GET /api/admin/payouts/stuck lists manual review payouts', async () => {
+    await writeStore({
+      ...BASE_STORE,
+      payoutFailures: [
+        {
+          id: 'pf-1',
+          datasetId: 'ds-payment-1',
+          sellerWallet: SELLER_WALLET,
+          buyerTxHash: 'tx-stuck',
+          intendedAmount: 0.95,
+          status: 'manual_review_needed',
+          retryCount: 3,
+          nextRetryAt: new Date().toISOString(),
+          lastError: 'all retries failed',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    process.env.ADMIN_API_KEY = 'test-admin';
+
+    const response = await request(app)
+      .get('/api/admin/payouts/stuck')
+      .set('Authorization', 'Bearer test-admin');
+
+    expect(response.status).toBe(200);
+    expect(response.body.payouts).toHaveLength(1);
+    expect(response.body.payouts[0].status).toBe('manual_review_needed');
+  });
+
+  it('POST /api/agent/research/demo returns a valid report shape', async () => {
+    const response = await request(app).post('/api/agent/research/demo').send({
+      query: 'best low risk strategy',
+    });
+  it('GET /api/v1/payments/admin/unpaid-sellers returns failed seller payouts', async () => {
     await writeStore({ ...BASE_STORE, transactions: [{ id: 'tx-unpaid-1', datasetId: 'ds-payment-1', txHash: 'escrow-99', amount: 1, sellerPaid: false, sellerAmount: 0.95, timestamp: new Date().toISOString() }] });
-    const r = await request(app).get('/api/admin/unpaid-sellers').set('Authorization', 'Bearer admin-test-key');
+    const r = await request(app).get('/api/v1/payments/admin/unpaid-sellers').set('Authorization', 'Bearer admin-test-key');
     expect(r.status).toBe(200);
     expect(r.body.total).toBe(1);
     expect(r.body.unpaidTransactions[0]).toMatchObject({ txHash: 'escrow-99', sellerPaid: false, datasetName: 'USDC Yield Dataset', sellerWallet: SELLER_WALLET });
   });
 
-  it('POST /api/agent/research/demo returns a valid report shape', async () => {
-    const r = await request(app).post('/api/agent/research/demo').send({ query: 'best low risk strategy' });
+  it('POST /api/v1/agent/research/demo returns a valid report shape', async () => {
+    const r = await request(app).post('/api/v1/agent/research/demo').send({ query: 'best low risk strategy' });
     expect(r.status).toBe(200);
     expect(r.body.success).toBe(true);
     expect(r.body.demo).toBe(true);

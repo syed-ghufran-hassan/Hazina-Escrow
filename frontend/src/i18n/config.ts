@@ -17,6 +17,7 @@ export function normalizeLocale(input: string | null | undefined): SupportedLoca
   }
 
   const base = normalized.split("-")[0];
+  if (!base) return null;
   return isSupportedLocale(base) ? base : null;
 }
 

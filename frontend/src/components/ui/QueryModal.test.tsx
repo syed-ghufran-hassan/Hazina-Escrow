@@ -68,9 +68,13 @@ describe('QueryModal', () => {
       },
       transaction: {
         hash: 'demo-hash',
+        status: 'confirmed',
+        deliveryStatus: 'delivered',
         amount: 0.05,
         sellerReceived: 0.0475,
         platformFee: 0.0025,
+        status: 'success',
+        deliveryStatus: 'delivered',
       },
     });
 
@@ -119,9 +123,13 @@ describe('QueryModal', () => {
       },
       transaction: {
         hash: 'demo-hash',
+        status: 'confirmed',
+        deliveryStatus: 'delivered',
         amount: 0.05,
         sellerReceived: 0.0475,
         platformFee: 0.0025,
+        status: 'success',
+        deliveryStatus: 'delivered',
       },
     });
 
@@ -147,6 +155,49 @@ describe('QueryModal', () => {
       expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock');
     });
     expect(createObjectURL).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets state when reopened after a failed payment attempt', async () => {
+    vi.mocked(api.verifyPayment).mockRejectedValueOnce(new Error('Network timeout'));
+
+    const { rerender } = render(
+      <I18nProvider initialLocale="en">
+        <QueryModal isOpen={true} dataset={dataset} onClose={vi.fn()} onSuccess={vi.fn()} />
+      </I18nProvider>,
+    );
+
+    // Advance to the payment step
+    fireEvent.click(screen.getByRole('button', { name: 'Proceed to Payment' }));
+    await waitFor(() => expect(api.initiateQuery).toHaveBeenCalledWith('ds-query-1'));
+
+    // Enter a tx hash and trigger a failed verification
+    fireEvent.change(screen.getByPlaceholderText('Paste your Stellar transaction hash...'), {
+      target: { value: 'tx-stale-hash' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify & Get Data' }));
+
+    await waitFor(() => expect(screen.getByText('Verification Failed')).toBeTruthy());
+
+    // Simulate close: set isOpen=false (component stays mounted, state preserved)
+    rerender(
+      <I18nProvider initialLocale="en">
+        <QueryModal isOpen={false} dataset={dataset} onClose={vi.fn()} onSuccess={vi.fn()} />
+      </I18nProvider>,
+    );
+
+    // Reopen: set isOpen=true — the useEffect should reset all state
+    rerender(
+      <I18nProvider initialLocale="en">
+        <QueryModal isOpen={true} dataset={dataset} onClose={vi.fn()} onSuccess={vi.fn()} />
+      </I18nProvider>,
+    );
+
+    // Modal should be back at the details step with no stale error or tx hash
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Proceed to Payment' })).toBeTruthy(),
+    );
+    expect(screen.queryByText('Verification Failed')).toBeNull();
+    expect(screen.queryByText('Network timeout')).toBeNull();
   });
 
   it('shows error state for failed verification and allows retry', async () => {

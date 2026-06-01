@@ -1,16 +1,17 @@
 /**
- * Environment variable validation.
+ * Environment variable validation and central access.
  *
- * Call validateEnv() once at app startup (main.tsx) so missing or
+ * Call initEnv() once at the very top of app startup (main.tsx) so missing or
  * invalid env vars fail loudly instead of causing cryptic runtime errors.
  */
 
-interface EnvConfig {
+export interface EnvConfig {
+  /** Base URL of the backend API (e.g. http://localhost:3001) */
   apiUrl: string;
   enableDemoMode: boolean;
 }
 
-const REQUIRED_ENV_VARS = ["VITE_API_URL"] as const;
+const REQUIRED_ENV_VARS = ["VITE_API_URL", "VITE_API_KEY"] as const;
 
 function readEnableDemoMode() {
   return String(import.meta.env.VITE_ENABLE_DEMO_MODE ?? "")
@@ -25,8 +26,11 @@ function readEnableDemoMode() {
 export function validateEnv(): EnvConfig {
   const missing: string[] = [];
 
+  // Try import.meta.env first (Vite), fall back to process.env (Node/test environment)
+  const envVars = (import.meta.env as any) || process.env;
+
   for (const key of REQUIRED_ENV_VARS) {
-    const value = import.meta.env[key];
+    const value = envVars[key];
     if (!value || String(value).trim() === "") {
       missing.push(key);
     }
@@ -39,6 +43,12 @@ export function validateEnv(): EnvConfig {
         "Copy .env.example to .env and fill in the missing values before starting the app.",
     );
   }
+
+  const network = (envVars.VITE_STELLAR_NETWORK || "testnet").trim().toLowerCase();
+  const stellarNetwork = (network === "mainnet" || network === "public") ? "public" : "testnet";
+
+  const maxRequestsRaw = parseInt(envVars.VITE_MAX_CONCURRENT_REQUESTS || "8", 10);
+  const maxConcurrentRequests = Number.isFinite(maxRequestsRaw) && maxRequestsRaw > 0 ? maxRequestsRaw : 8;
 
   return {
     apiUrl: String(import.meta.env.VITE_API_URL).trim().replace(/\/+$/, ""),
