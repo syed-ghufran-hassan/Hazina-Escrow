@@ -11,12 +11,12 @@ import {
   User,
   Zap,
   Info,
-} from "lucide-react";
-import { api } from "../lib/api";
-import { formatUSDC, getTypeMeta, DATA_TYPE_META } from "../lib/utils";
-import clsx from "clsx";
-import { getCatalog, useI18n } from "../i18n";
-import { Toast, ToastProps } from "../components/ui/Toast";
+} from 'lucide-react';
+import { api } from '../lib/api';
+import { formatUSDC, getTypeMeta, DATA_TYPE_META } from '../lib/utils';
+import clsx from 'clsx';
+import { getCatalog, useI18n } from '../i18n';
+import { useToastContext } from '../components/ui/ToastProvider';
 
 const PRICE_PRESETS = [0.01, 0.02, 0.05, 0.1, 0.25, 0.5];
 
@@ -110,14 +110,9 @@ export default function SellPage() {
   const { locale, t } = useI18n();
   const catalog = getCatalog(locale);
   const navigate = useNavigate();
-
-  // Load draft on component mount
-  const [form, setForm] = useState<FormState>(() => {
-    const { form: loadedForm } = loadDraft();
-    return loadedForm;
-  });
-
-  const [tab, setTab] = useState<Tab>("form");
+  const { success: toastSuccess, error: toastError } = useToastContext();
+  const [form, setForm] = useState<FormState>(loadDraft);
+  const [tab, setTab] = useState<Tab>('form');
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
@@ -232,8 +227,11 @@ export default function SellPage() {
       });
       clearDraft();
       setSuccess(true);
+      toastSuccess(t('sell.messages.listingLive'), form.name.trim());
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : t('sell.messages.createFailed'));
+      const msg = err instanceof Error ? err.message : t('sell.messages.createFailed');
+      setError(msg);
+      toastError(t('sell.messages.createFailed'), msg);
     } finally {
       setSubmitting(false);
     }
