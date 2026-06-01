@@ -259,37 +259,43 @@ agentRouter.post(
       logger.info(`[Agent][Demo] New research job: "${query}"`);
       const job = await runResearchAgentDemo(query);
 
-      return res.json({
-        success: true,
-        demo: true,
-        jobId: job.jobId,
-        query: job.query,
-        report: stripRawAnalysis(job.report),
-        payments: {
-          humanPaid: 1,
-          currency: 'USDC',
-          network: 'Stellar (simulated)',
-          note: 'Demo mode — no real Stellar transactions. All payments simulated.',
-          sellerPayments: job.purchases.map(p => ({
-            seller: p.datasetName,
-            type: p.type,
-            amount: p.amountPaid,
-            txHash: p.txHash,
-            onChain: false,
-          })),
-          totalSpent: job.totalSpent,
-          agentProfit: job.agentProfit,
-        },
-        meta: {
-          agentWallet: job.agentWallet ?? 'demo-wallet',
-          timestamp: job.timestamp,
-          datasetsQueried: job.purchases.length,
-        },
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Research agent error';
-      logger.error(`[Agent][Demo] Error: ${message}`);
-      return res.status(500).json({ error: message });
-    }
-  },
-);
+    res.setHeader('X-Demo-Mode', 'true');
+    return res.json({
+      success: true,
+      demo: true,
+      disclaimer:
+        'DEMO MODE: All payments, transaction hashes, and wallet addresses are simulated. No real blockchain activity occurred.',
+      jobId: job.jobId,
+      query: job.query,
+      report: stripRawAnalysis(job.report),
+      payments: {
+        humanPaid: 1,
+        currency: 'USDC',
+        network: 'Stellar (simulated)',
+        note: 'Demo mode — no real Stellar transactions. All payments simulated.',
+        disclaimer: 'SIMULATED: These payments did not occur on any blockchain.',
+        sellerPayments: job.purchases.map((p) => ({
+          seller: p.datasetName,
+          type: p.type,
+          amount: p.amountPaid,
+          txHash: p.txHash,
+          onChain: false,
+          simulated: true,
+          disclaimer: '[SIMULATED] Not a real transaction — demo mode only',
+        })),
+        totalSpent: job.totalSpent,
+        agentProfit: job.agentProfit,
+      },
+      meta: {
+        agentWallet: job.agentWallet ?? 'demo-wallet',
+        timestamp: job.timestamp,
+        datasetsQueried: job.purchases.length,
+      },
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Research agent error';
+    logger.error('[Agent][Demo] Error:', err);
+    return res.status(500).json({ error: message });
+  }
+});
+\nimport { logger } from '../lib/logger';
