@@ -6,6 +6,7 @@ import {
   addTransaction,
   txHashUsed,
   getAgentJobByTxHash,
+  reserveTxHash,
 } from '../common/storage';
 import { verifyStellarPayment } from '../payments/stellar.service';
 import { sendUsdcPayment, getAgentPublicKey } from './agent.wallet';
@@ -18,6 +19,11 @@ import {
   ResearchReport,
 } from '../ai/research.service';
 import { notifySeller } from '../webhooks/webhook.service';
+
+// Serialised queue — ensures only one real research job runs at a time,
+// preventing concurrent Stellar payments from draining the agent wallet and
+// preventing duplicate addTransaction writes under load (#379).
+let agentJobQueue: Promise<void> = Promise.resolve();
 
 // Fee the agent charges the human (1 USDC flat by default).
 // Override via AGENT_FEE_USDC environment variable (e.g. "2.5").
@@ -103,29 +109,39 @@ export async function runResearchAgent(
     return result;
   }
 
-  const escrowWallet = process.env.ESCROW_WALLET;
-  if (!escrowWallet) throw new Error('ESCROW_WALLET not configured');
+  // Reserve the hash immediately so concurrent requests with the same hash are
+  // blocked even while this job waits its turn in the queue (#364).
+  const releaseReservation = reserveTxHash(humanTxHash);
 
-  const verification = await verifyStellarPayment({
-    txHash: humanTxHash,
-    expectedAmount: AGENT_FEE_USDC,
-    destinationAddress: escrowWallet,
-  });
+  // Enqueue behind any in-progress real job so concurrent calls can't race to
+  // drain the agent wallet or produce duplicate transaction writes (#379).
+  return new Promise<AgentJob | IdempotentJobResult>((resolve, reject) => {
+    agentJobQueue = agentJobQueue.then(async () => {
+      try {
+        const escrowWallet = process.env.ESCROW_WALLET;
+        if (!escrowWallet) throw new Error('ESCROW_WALLET not configured');
 
-  if (!verification.valid) {
-    domainMetrics.agentHumanPaymentVerified({
-      mode: 'real',
-      status: 'failed',
+        const verification = await verifyStellarPayment({
+          txHash: humanTxHash,
+          expectedAmount: AGENT_FEE_USDC,
+          destinationAddress: escrowWallet,
+        });
+
+        if (!verification.valid) {
+          domainMetrics.agentHumanPaymentVerified({ mode: 'real', status: 'failed' });
+          throw new Error(verification.reason || 'Human payment verification failed');
+        }
+
+        domainMetrics.agentHumanPaymentVerified({ mode: 'real', status: 'verified' });
+
+        // addTransaction inside _executeResearch will take over hash tracking
+        resolve(await _executeResearch(query, humanTxHash, false));
+      } catch (err) {
+        releaseReservation(); // free slot so the user can retry on transient errors
+        reject(err);
+      }
     });
-    throw new Error(verification.reason || 'Human payment verification failed');
-  }
-
-  domainMetrics.agentHumanPaymentVerified({
-    mode: 'real',
-    status: 'verified',
   });
-
-  return _executeResearch(query, humanTxHash, false);
 }
 
 /**
