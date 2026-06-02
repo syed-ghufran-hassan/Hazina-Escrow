@@ -9,6 +9,8 @@ import {
 } from '../common/storage';
 import { verifyStellarPayment } from '../payments/stellar.service';
 import { sendUsdcPayment, getAgentPublicKey } from './agent.wallet';
+import { logger } from '../lib/logger';
+import { domainMetrics } from '../common/datadog';
 import {
   synthesizeResearch,
   parseRiskTolerance,
@@ -16,10 +18,12 @@ import {
   ResearchReport,
 } from '../ai/research.service';
 import { notifySeller } from '../webhooks/webhook.service';
-import { domainMetrics } from '../common/datadog';
 
-// Fee the agent charges the human (1 USDC flat)
-export const AGENT_FEE_USDC = 1;
+// Fee the agent charges the human (1 USDC flat by default).
+// Override via AGENT_FEE_USDC environment variable (e.g. "2.5").
+const RAW_FEE = process.env.AGENT_FEE_USDC ?? '1';
+const PARSED_FEE = parseFloat(RAW_FEE);
+export const AGENT_FEE_USDC = Number.isFinite(PARSED_FEE) && PARSED_FEE >= 0 ? PARSED_FEE : 1;
 
 // Dataset types the agent purchases and their roles in the report
 export const SELLER_TYPES = [
@@ -41,6 +45,8 @@ export interface AgentJob {
   agentProfit: number;
   report: ResearchReport;
   timestamp: string;
+  datasetsAvailable: number;
+  datasetsTotal: number;
 }
 
 /**
@@ -82,7 +88,7 @@ export async function runResearchAgent(
   //    cached result so callers can surface it as HTTP 200 rather than an error.
   if (await txHashUsed(humanTxHash)) {
     const existing = await getAgentJobByTxHash(humanTxHash);
-    
+
     if (!existing) {
       throw new Error('Transaction hash already used');
     }
@@ -143,16 +149,27 @@ async function _executeResearch(
 
   const allDatasets = await getAllDatasets();
 
-  // 2. Find the best dataset for each seller role
+  // 2. Find which seller types have matching datasets
+  const availableSellers = SELLER_TYPES.map(seller => {
+    const dataset = allDatasets.find(d => d.type === seller.type);
+    return { seller, dataset };
+  });
+
+  const datasetsAvailable = availableSellers.filter(s => s.dataset).length;
+
+  if (datasetsAvailable === 0) {
+    throw new Error(
+      'No datasets available for research. The platform currently has no active data sellers.',
+    );
+  }
+
   const purchases: PurchaseRecord[] = [];
-  const collectedData: Record<string, Record<string, unknown>> = {};
+  const sellerData: import('../ai/research.service').SellerDataset[] = [];
   let totalSpent = 0;
 
-  for (const seller of SELLER_TYPES) {
-    const dataset = allDatasets.find(d => d.type === seller.type);
+  for (const { seller, dataset } of availableSellers) {
     if (!dataset) {
       logger.warn(`[Agent] No dataset found for type: ${seller.type}`);
-      collectedData[seller.role] = {};
       continue;
     }
 
@@ -234,26 +251,22 @@ async function _executeResearch(
 
     // Read the actual data
     const fresh = await getDataset(dataset.id);
-    collectedData[seller.role] = fresh?.data ?? {};
+    sellerData.push({
+      role: seller.role,
+      displayName: seller.description,
+      data: fresh?.data ?? {},
+      cost: dataset.pricePerQuery,
+    });
   }
 
   const agentProfit = parseFloat((AGENT_FEE_USDC - totalSpent).toFixed(4));
 
-  const datasetCosts: Record<string, number> = {};
-  purchases.forEach(p => {
-    datasetCosts[p.role] = p.amountPaid;
-  });
-
-  // 3. Synthesise with Claude
+  // 3. Synthesise with Claude using only the available datasets
   const report = await synthesizeResearch({
     userQuery: query,
     budget,
     riskTolerance,
-    yieldData: collectedData['yieldData'] ?? {},
-    whaleData: collectedData['whaleData'] ?? {},
-    riskData: collectedData['riskData'] ?? {},
-    sentimentData: collectedData['sentimentData'] ?? {},
-    datasetCosts,
+    availableSellers: sellerData,
   });
 
   // 4. Log the agent job as a transaction for audit trail
@@ -272,7 +285,7 @@ async function _executeResearch(
     mode: demo ? 'demo' : 'real',
     status: 'completed',
     datasetsQueried: purchases.length,
-    totalSpent: totalSpent,
+    totalSpent,
   });
 
   return {
@@ -287,6 +300,7 @@ async function _executeResearch(
     agentProfit,
     report,
     timestamp: new Date().toISOString(),
+    datasetsAvailable,
+    datasetsTotal: SELLER_TYPES.length,
   };
 }
-\nimport { logger } from '../lib/logger';
