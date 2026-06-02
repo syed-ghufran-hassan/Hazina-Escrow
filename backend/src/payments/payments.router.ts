@@ -1,12 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import { validateBody } from '../common/validate';
+import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
+import { generateDataSummary } from '../ai/claude.service';
+import { sanitizeUserText } from '../common/sanitize';
+import { requireAdminKey } from '../common/auth.middleware';
+import { scheduleRetrySweep } from './payout-retry.service';
+import { transactionEventEmitter } from '../websocket/transaction-events';
+import { domainMetrics } from '../common/datadog';
+import { deliverVerifiedPayment, markDeliveryFailure, processPayment } from './payments.service';
+import { PaymentError, StellarTimeoutError } from './stellar.service';
+import { logger } from '../lib/logger';
 import {
   getDataset,
   updateDataset,
   addTransaction,
-  getFailedDeliveryTransactions,
-  txHashUsed,
   getUnpaidTransactions,
 } from '../common/storage';
 import { validateBody } from '../common/validate';
@@ -15,30 +24,25 @@ import { generateDataSummary } from '../ai/claude.service';
 import { sanitizeUserText } from '../common/sanitize';
 import { transactionEventEmitter } from '../websocket/transaction-events';
 import { requireAdminKey } from '../common/auth.middleware';
-import { deliverVerifiedPayment, markDeliveryFailure, processPayment } from './payments.service';
-} from "../common/storage";
-import { validateBody } from "../common/validate";
-import { sellerShare, platformFee as computePlatformFee } from "../common/constants";
-import { generateDataSummary } from "../ai/claude.service";
-import { sanitizeUserText } from "../common/sanitize";
-import { requireAdminKey } from "../common/auth.middleware";
 import {
   getManualReviewPayouts,
   recordPayoutFailure,
   runDuePayoutRetries,
   scheduleRetrySweep,
-} from "./payout-retry.service";
-import { transactionEventEmitter } from "../websocket/transaction-events";
-import { requireAdminKey } from "../common/auth.middleware";
-import { domainMetrics } from "../common/datadog";
+} from './payout-retry.service';
+import { sendUsdcPayment } from '../agent/agent.wallet';
 import {
   deliverVerifiedPayment,
   markDeliveryFailure,
   processPayment,
-} from "./payments.service";
-import { PaymentError, StellarTimeoutError } from "./stellar.service";
+  startSellerNotificationRetryWorker,
+  stopSellerNotificationRetryWorker,
+} from './payments.service';
+import { PaymentError, StellarTimeoutError } from './stellar.service';
 
 export const paymentsRouter = Router();
+
+// Start the payout retry sweep scheduler
 scheduleRetrySweep(1_000);
 
 const verifySchema = z.object({
@@ -163,8 +167,6 @@ const verifyDemoSchema = z.object({
 
 
 
-import { v4 as uuidv4 } from "uuid";
- main
 // POST /api/query/:id — initiate query, returns 402 Payment Required
 paymentsRouter.post('/query/:id', async (req: Request, res: Response) => {
   const dataset = await getDataset(req.params.id);
@@ -261,34 +263,11 @@ export function stopDeliveryRetryWorker(): void {
 
   clearInterval(deliveryRetryWorker);
   deliveryRetryWorker = null;
+  stopSellerNotificationRetryWorker();
 }
 
-    // Forward 95% to seller on-chain
-    let sellerTxHash: string | undefined;
-    const sellerAmount = parseFloat((dataset.pricePerQuery * 0.95).toFixed(7));
-    try {
-      const payment = await sendUsdcPayment({
-        destinationAddress: dataset.sellerWallet,
-        amount: sellerAmount.toFixed(7),
-        memo: `hazina-${dataset.id.slice(0, 10)}`,
-      });
-      sellerTxHash = payment.txHash;
-      logger.info(
-        `[Escrow] Paid seller ${sellerAmount} USDC → ${dataset.sellerWallet} (${sellerTxHash})`,
-      );
-    } catch (payErr) {
-      logger.warn(
-        "[Escrow] Seller payment failed (data still delivered):",
-        payErr instanceof Error ? payErr.message : payErr,
-      );
-      await recordPayoutFailure({
-        datasetId: dataset.id,
-        sellerWallet: dataset.sellerWallet,
-        buyerTxHash: txHash,
-        intendedAmount: sellerAmount,
-        error: payErr instanceof Error ? payErr.message : String(payErr),
-      });
-    }
+export { startSellerNotificationRetryWorker };
+
 // POST /api/verify/:id — verify payment on Stellar and release the dataset to the buyer
 paymentsRouter.post(
   '/verify/:id',
@@ -310,63 +289,63 @@ paymentsRouter.post(
         buyerQuestion,
       });
 
-    if (!dataset) return res.status(404).json({ error: 'Dataset not found' });
-    if (await txHashUsed(txHash)) {
-      return res.status(400).json({ error: 'Escrow already processed' });
-    }
+      // Forward seller's share on-chain; failures enter the DLQ for retry
+      const sellerAmount = parseFloat((dataset.pricePerQuery * 0.95).toFixed(7));
+      try {
+        const payment = await sendUsdcPayment({
+          destinationAddress: dataset.sellerWallet,
+          amount: sellerAmount.toFixed(7),
+          memo: `hazina-${dataset.id.slice(0, 10)}`,
+        });
+        console.log(
+          `[Escrow] Paid seller ${sellerAmount} USDC → ${dataset.sellerWallet} (${payment.txHash})`,
+        );
+      } catch (payErr) {
+        console.warn(
+          '[Escrow] Seller payment failed (data still delivered):',
+          payErr instanceof Error ? payErr.message : payErr,
+        );
+        await recordPayoutFailure({
+          datasetId: dataset.id,
+          sellerWallet: dataset.sellerWallet,
+          buyerTxHash: txHash,
+          intendedAmount: sellerAmount,
+          error: payErr instanceof Error ? payErr.message : String(payErr),
+        });
+      }
 
-    try {
-      const result = await processPayment({
-        txHash,
-        datasetId: dataset.id,
-        buyerQuestion,
-      });
-
-// GET /api/admin/payouts/stuck — list payouts requiring manual review
-paymentsRouter.get('/admin/payouts/stuck', requireAdminKey, async (_req: Request, res: Response) => {
-  return res.json({
-    payouts: await getManualReviewPayouts(),
-  });
-});
-
-    return res.json({
-      ...result,
-      warning: null,
-    });
-  } catch (err) {
-    if (err instanceof StellarTimeoutError) {
-      // Network-level failure — not the client's fault
-      return res.status(503).json({ error: err.message });
-    }
-    if (err instanceof PaymentError) {
-      // Intentional user-facing error with a safe message we authored
-      return res.status(400).json({ error: err.message });
-    }
-    // Unexpected error — log full details server-side, send nothing internal to client
-    logger.error("[Verify] Unexpected error processing payment:", err);
-    return res.status(500).json({ error: "Payment verification failed — please try again" });
-  }
-});
-
-
-// POST /api/verify/:id/demo — demo mode (skip Stellar check) for hackathon
-paymentsRouter.post("/verify/:id/demo", validateBody(verifyDemoSchema), async (req: Request, res: Response) => {
-  const { buyerQuestion } = req.body as z.infer<typeof verifyDemoSchema>;
-  const dataset = await getDataset(req.params.id);
       if (result.pendingDelivery) {
         return res.status(202).json(result);
       }
 
       return res.json({
         ...result,
-        warning: null,
+        warning: result.pendingDelivery ? result.warning : null,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Internal verification error';
-      return res.status(400).json({ error: message });
+      if (err instanceof StellarTimeoutError) {
+        return res.status(503).json({ error: err.message });
+      }
+      if (err instanceof PaymentError) {
+        return res.status(400).json({ error: err.message });
+      }
+      console.error('[Verify] Unexpected error processing payment:', err);
+      return res.status(500).json({ error: 'Payment verification failed — please try again' });
     }
   },
 );
+
+// GET /api/admin/payouts/stuck — list payouts requiring manual review
+paymentsRouter.get('/admin/payouts/stuck', requireAdminKey, (_req: Request, res: Response) => {
+  return res.json({ payouts: getManualReviewPayouts() });
+});
+
+// POST /api/admin/payouts/retry — trigger retry sweep now
+paymentsRouter.post('/admin/payouts/retry', requireAdminKey, async (_req: Request, res: Response) => {
+  const processed = await runDuePayoutRetries();
+  scheduleRetrySweep(1_000);
+  return res.json({ success: true, processed });
+});
 
 // POST /api/verify/:id/demo — demo mode (skip Stellar check) for hackathon
 paymentsRouter.post(
@@ -397,7 +376,7 @@ paymentsRouter.post(
       summary = result.summary;
       answer = result.answer;
     } catch (err) {
-      logger.error('Demo mode AI error:', err);
+      logger.error(`Demo mode AI error: ${err instanceof Error ? err.message : String(err)}`);
       summary = 'Demo mode: AI summary unavailable. Set ANTHROPIC_API_KEY to enable.';
     }
 
@@ -437,34 +416,16 @@ paymentsRouter.post(
       aiSummary: summary,
     });
 
-  domainMetrics.paymentVerified({
-    datasetType: dataset.type,
-    mode: "demo",
-    status: "delivered",
-  });
-  domainMetrics.datasetQueried({
-    datasetType: dataset.type,
-    mode: "demo",
-    source: "buyer",
-  });
-
-  return res.json({
-    success: true,
-    demo: true,
-    data: dataset.data,
-    ai: { summary, answer },
-    transaction: {
-      hash: `demo-${Date.now()}`,
-      status: "completed",
-      deliveryStatus: "delivered",
-      amount: dataset.pricePerQuery,
-      sellerReceived: parseFloat(sellerAmount.toFixed(4)),
-      platformFee: parseFloat(platformFee.toFixed(4)),
-    },
-  });
-});
-    // Emit dataset queried event
-    transactionEventEmitter.queryDataset(transactionId, dataset.id, dataset.queriesServed + 1);
+    domainMetrics.paymentVerified({
+      datasetType: dataset.type,
+      mode: 'demo',
+      status: 'delivered',
+    });
+    domainMetrics.datasetQueried({
+      datasetType: dataset.type,
+      mode: 'demo',
+      source: 'buyer',
+    });
 
     return res.json({
       success: true,
@@ -506,4 +467,3 @@ paymentsRouter.get(
     });
   },
 );
-\nimport { logger } from '../lib/logger';
