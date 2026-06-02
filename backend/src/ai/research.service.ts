@@ -81,18 +81,9 @@ export async function synthesizeResearch(input: ResearchInput): Promise<Research
     )
     .join('\n\n---\n\n');
 
-  const sellerCount = input.availableSellers.length;
-  const prompt = `You are the Hazina Research Agent — an autonomous DeFi yield researcher. You have just purchased data from ${sellerCount} specialised on-chain data seller${sellerCount !== 1 ? 's' : ''} using micro-payments on Stellar. Synthesise all datasets into a single, actionable research report for the user.
-
-USER QUERY: "${input.userQuery}"
-BUDGET: $${input.budget} USDC
-RISK TOLERANCE: ${input.riskTolerance}
-
----
-
-${datasetSections}
-
----
+  // Static system instructions — marked for prompt caching so repeated agent
+  // jobs reuse the cached token block rather than re-tokenising it (#378).
+  const systemPrompt = `You are the Hazina Research Agent — an autonomous DeFi yield researcher. You have just purchased data from on-chain data sellers using micro-payments on Stellar. Synthesise all datasets into a single, actionable research report for the user.
 
 INSTRUCTIONS:
 1. Identify the single best USDC yield opportunity that matches the user's risk tolerance and budget.
@@ -117,12 +108,21 @@ Respond ONLY with valid JSON in this exact shape (no markdown fences):
   "rawAnalysis": "Concise paragraph synthesising all four data sources"
 }`;
 
+  const userMessage = `USER QUERY: "${input.userQuery}"
+BUDGET: $${input.budget} USDC
+RISK TOLERANCE: ${input.riskTolerance}
+
+---
+
+${datasetSections}`;
+
   try {
-    // First attempt
+    // First attempt — system prompt cached; only the dynamic dataset content is re-sent
     const response = await client.messages.create({
       model: getAnthropicResearchModel(),
       max_tokens: 2048,
-      messages: [{ role: 'user', content: prompt }],
+      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: userMessage }],
     });
 
     const raw = response.content
@@ -130,23 +130,26 @@ Respond ONLY with valid JSON in this exact shape (no markdown fences):
       .map(b => (b as { type: 'text'; text: string }).text)
       .join('');
 
-    // Try to parse the initial response
     let parsed = tryParseJson(raw);
     if (parsed !== null) {
       return parsed;
     }
 
-    // Retry with stricter prompt
+    // Retry with stricter instruction — still benefits from cached system prompt
     logger.warn('[synthesizeResearch] Initial parse failed, retrying with stricter prompt');
-
-    const stricterPrompt = `${prompt}
-
-CRITICAL: Return ONLY valid JSON. Do not include explanations, markdown, code fences, or any extra text. Just the JSON object.`;
 
     const retryResponse = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2048,
-      messages: [{ role: 'user', content: stricterPrompt }],
+      system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+      messages: [
+        { role: 'user', content: userMessage },
+        {
+          role: 'user',
+          content:
+            'CRITICAL: Return ONLY valid JSON. Do not include explanations, markdown, code fences, or any extra text. Just the JSON object.',
+        },
+      ],
     });
 
     const retryRaw = retryResponse.content
@@ -159,7 +162,6 @@ CRITICAL: Return ONLY valid JSON. Do not include explanations, markdown, code fe
       return parsed;
     }
 
-    // Both attempts failed
     throw new Error(
       `Failed to parse Claude JSON response after retry. Raw output: ${raw.slice(0, 500)}`,
     );

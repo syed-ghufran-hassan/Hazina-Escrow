@@ -7,6 +7,20 @@ const LOCK_PATH = path.join(DATA_DIR, '.store.lock');
 const LOCK_STALE_MS = 30_000;
 const pendingTxHashes = new Set<string>();
 
+// Rolling window cap — keeps the transactions array and backup size bounded (#368)
+const MAX_TRANSACTIONS_WINDOW = 10_000;
+
+/**
+ * Marks a tx hash as in-flight the moment the duplicate check passes, closing
+ * the TOCTOU window between txHashUsed() and the eventual addTransaction() call
+ * deep in the pipeline. Returns a cleanup fn — call it on any error path so the
+ * slot is freed for legitimate retries (#364).
+ */
+export function reserveTxHash(txHash: string): () => void {
+  pendingTxHashes.add(txHash);
+  return () => pendingTxHashes.delete(txHash);
+}
+
 // In-memory cache: populated on first read, invalidated on every write.
 let cache: Store | null = null;
 
@@ -284,6 +298,10 @@ export async function addTransaction(tx: Transaction): Promise<void> {
 
   return updateStore(async store => {
     store.transactions.push(tx);
+    // Prune oldest entries once the rolling window is exceeded (#368)
+    if (store.transactions.length > MAX_TRANSACTIONS_WINDOW) {
+      store.transactions = store.transactions.slice(store.transactions.length - MAX_TRANSACTIONS_WINDOW);
+    }
   }).finally(() => {
     if (tx.txHash) {
       pendingTxHashes.delete(tx.txHash);
