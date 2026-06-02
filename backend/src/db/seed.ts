@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
 import db from './client';
 import { datasets, transactions, datasetsSqlite, transactionsSqlite } from './schema';
+import { logger } from '../lib/logger';
 
 const isPostgres =
   (process.env.DATABASE_URL ?? '').startsWith('postgres://') ||
@@ -40,20 +41,17 @@ async function seedDatasets(jsonData: Record<string, unknown>): Promise<void> {
   }
 
   for (const dataset of jsonData.datasets as DatasetFromJSON[]) {
-    const existing = await db.select().from(datasets).where(eq(datasets.id, dataset.id)).limit(1);
     const existing = await db
       .select()
-      // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
       .from(datasetsTable as typeof datasets)
       .where(eq((datasetsTable as typeof datasets).id, dataset.id))
       .limit(1);
 
     if (existing.length > 0) {
-      console.log(`⊘ Dataset already exists: ${dataset.id}`);
+      logger.info(`⊘ Dataset already exists: ${dataset.id}`);
       continue;
     }
 
-    // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
     await db.insert(datasetsTable as typeof datasets).values({
       id: dataset.id,
       name: dataset.name,
@@ -66,7 +64,7 @@ async function seedDatasets(jsonData: Record<string, unknown>): Promise<void> {
       totalEarned: dataset.totalEarned.toString(),
       createdAt: dataset.createdAt,
     });
-    console.log(`✓ Inserted dataset: ${dataset.id}`);
+    logger.info(`✓ Inserted dataset: ${dataset.id}`);
   }
 }
 
@@ -78,17 +76,15 @@ async function seedTransactions(jsonData: Record<string, unknown>): Promise<void
   for (const tx of jsonData.transactions as TransactionFromJSON[]) {
     const existing = await db
       .select()
-      // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
       .from(transactionsTable as typeof transactions)
       .where(eq((transactionsTable as typeof transactions).txHash, tx.txHash))
       .limit(1);
 
     if (existing.length > 0) {
-      console.log(`⊘ Transaction already exists: ${tx.txHash}`);
+      logger.info(`⊘ Transaction already exists: ${tx.txHash}`);
       continue;
     }
 
-    // @ts-expect-error - Drizzle union type limitation between PostgreSQL and SQLite
     await db.insert(transactionsTable as typeof transactions).values({
       id: tx.id,
       datasetId: tx.datasetId,
@@ -98,7 +94,7 @@ async function seedTransactions(jsonData: Record<string, unknown>): Promise<void
       aiSummary: tx.aiSummary || null,
       timestamp: tx.timestamp,
     });
-    console.log(`✓ Inserted transaction: ${tx.txHash}`);
+    logger.info(`✓ Inserted transaction: ${tx.txHash}`);
   }
 }
 
@@ -108,15 +104,15 @@ async function seed(): Promise<void> {
     const fileContent = await fs.readFile(dataPath, 'utf-8');
     const jsonData = JSON.parse(fileContent);
 
-    console.log('Seeding database...');
+    logger.info('Seeding database...');
 
     await seedDatasets(jsonData);
     await seedTransactions(jsonData);
 
-    console.log('Seeding complete!');
+    logger.info('Seeding complete!');
     process.exit(0);
   } catch (error) {
-    console.error('Seed error:', error);
+    logger.error(`Seed error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 }

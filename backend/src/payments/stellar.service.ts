@@ -1,6 +1,8 @@
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { getCircuitBreaker } from '../common/circuit-breaker';
+import { domainMetrics } from '../common/datadog';
 import { HORIZON_URL, USDC_ISSUER } from '../lib/stellar.config';
+import { logger } from '../lib/logger';
 
 const server = new StellarSdk.Horizon.Server(HORIZON_URL);
 
@@ -113,6 +115,12 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     );
 
     if (paymentOps.length === 0) {
+      domainMetrics.stellarPaymentVerified({
+        datasetType: 'unknown',
+        mode: 'real',
+        status: 'failed',
+        reason: 'no_payment_found',
+      });
       return { valid: false, reason: 'No payment to escrow address found in transaction' };
     }
 
@@ -123,6 +131,12 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     });
 
     if (usdcOps.length === 0) {
+      domainMetrics.stellarPaymentVerified({
+        datasetType: 'unknown',
+        mode: 'real',
+        status: 'failed',
+        reason: 'no_usdc_found',
+      });
       return {
         valid: false,
         reason: 'No USDC payment found — ensure you sent USDC on Stellar testnet',
@@ -134,6 +148,12 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     const tolerance = 0.001; // 0.001 USDC tolerance
 
     if (Math.abs(actualAmount - expectedAmount) > tolerance) {
+      domainMetrics.stellarPaymentVerified({
+        datasetType: 'unknown',
+        mode: 'real',
+        status: 'failed',
+        reason: 'amount_mismatch',
+      });
       return {
         valid: false,
         reason: `Amount mismatch: expected ${expectedAmount} USDC, received ${actualAmount} USDC`,
@@ -145,8 +165,21 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     const txTime = new Date(tx.created_at).getTime();
     const now = Date.now();
     if (now - txTime > 300_000) {
+      domainMetrics.stellarPaymentVerified({
+        datasetType: 'unknown',
+        mode: 'real',
+        status: 'failed',
+        reason: 'transaction_expired',
+      });
       return { valid: false, reason: 'Transaction expired (older than 5 minutes)' };
     }
+
+    // Log successful verification
+    domainMetrics.stellarPaymentVerified({
+      datasetType: 'unknown',
+      mode: 'real',
+      status: 'verified',
+    });
 
     return {
       valid: true,
@@ -155,17 +188,26 @@ export async function verifyStellarPayment(params: VerifyParams): Promise<Verify
     };
   } catch (err: unknown) {
     if (err instanceof StellarTimeoutError) {
+      domainMetrics.stellarTimeout({ method: 'transaction' });
       throw err; // propagate the user-friendly timeout error as-is
     }
     if (err && typeof err === 'object' && 'response' in err) {
       const httpErr = err as { response?: { status?: number } };
       if (httpErr.response?.status === 404) {
+        domainMetrics.stellarPaymentVerified({
+          datasetType: 'unknown',
+          mode: 'real',
+          status: 'failed',
+          reason: 'transaction_not_found',
+        });
         return { valid: false, reason: 'Transaction not found on Stellar testnet' };
       }
     }
     // Log the full SDK error server-side but never forward it to the client —
     // Stellar errors can contain sequence numbers, account IDs, and other internals.
-    console.error('[Stellar] Unexpected Horizon error:', err);
+    logger.error(
+      `[Stellar] Unexpected Horizon error: ${err instanceof Error ? err.message : String(err)}`,
+    );
     throw new Error('Stellar network error — please try again shortly');
   }
 }

@@ -13,6 +13,18 @@ vi.mock('../../lib/contract.client', () => ({
 
 vi.mock('../stellar.service', () => ({
   verifyStellarPayment: vi.fn(),
+  StellarTimeoutError: class StellarTimeoutError extends Error {
+    constructor(timeoutMs: number) {
+      super(`Stellar Horizon did not respond within ${timeoutMs / 1000} seconds.`);
+      this.name = 'StellarTimeoutError';
+    }
+  },
+  PaymentError: class PaymentError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'PaymentError';
+    }
+  },
 }));
 
 vi.mock('../../ai/claude.service', () => ({
@@ -21,6 +33,19 @@ vi.mock('../../ai/claude.service', () => ({
 
 vi.mock('../../webhooks/webhook.service', () => ({
   notifySeller: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('../../common/datadog', () => ({
+  domainMetrics: {
+    paymentVerified: vi.fn(),
+    paymentVerificationError: vi.fn(),
+    paymentDeliveryFailed: vi.fn(),
+    deliveryRetryAttempt: vi.fn(),
+    datasetQueried: vi.fn(),
+    agentJobCompleted: vi.fn(),
+    stellarPaymentVerified: vi.fn(),
+    stellarTimeout: vi.fn(),
+  },
 }));
 
 vi.mock('../../common/storage', async importOriginal => {
@@ -32,6 +57,17 @@ vi.mock('../../common/storage', async importOriginal => {
     addTransaction: vi.fn(() => Promise.resolve()),
     updateDataset: vi.fn(() => Promise.resolve()),
     updateTransactionByHash: vi.fn(() => Promise.resolve(null)),
+    updateTransactionByMemo: vi.fn(() => Promise.resolve(null)),
+    getTransactionByMemo: vi.fn(() =>
+      Promise.resolve({
+        id: 'tx-pending',
+        datasetId: 'ds-test-1',
+        txHash: '',
+        memo: 'haz',
+        amount: 1,
+        timestamp: new Date().toISOString(),
+      }),
+    ),
     getUnpaidTransactions: vi.fn(() => Promise.resolve([])),
   };
 });
@@ -43,6 +79,7 @@ import { generateDataSummary } from '../../ai/claude.service';
 import { getDataset, txHashUsed } from '../../common/storage';
 import type { Dataset } from '../../common/storage';
 import { verifyStellarPayment } from '../stellar.service';
+import { domainMetrics } from '../../common/datadog';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -154,13 +191,25 @@ describe('POST /api/v1/payments/verify/:id', () => {
       expectedAmount: 1,
       destinationAddress: SELLER_WALLET,
     });
+    expect(domainMetrics.paymentVerified).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'real',
+      status: 'delivered',
+    });
+    expect(domainMetrics.datasetQueried).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'real',
+      source: 'buyer',
+    });
   });
 
   it('returns 202 and records delivery failure when AI summary throws', async () => {
+    // Reset the txHashUsed mock to ensure it returns false for new txHash
+    vi.mocked(txHashUsed).mockResolvedValueOnce(false);
+
     vi.mocked(generateDataSummary).mockRejectedValue(new Error('Claude unavailable'));
 
     // Re-assert critical mocks to avoid interference from other parallel tests
-    vi.mocked(txHashUsed).mockResolvedValue(false);
     vi.mocked(verifyStellarPayment).mockResolvedValue({
       valid: true,
       actualAmount: 1,
@@ -174,8 +223,14 @@ describe('POST /api/v1/payments/verify/:id', () => {
     expect(res.status).toBe(202);
     expect(res.body.pendingDelivery).toBe(true);
     expect(res.body.warning).toBe('DELIVERY_PENDING_RETRY');
-    expect(res.body.transaction.status).toBe('verified');
+    expect(res.body.transaction.status).toBe('delivery_failed');
     expect(res.body.transaction.deliveryStatus).toBe('failed');
+    expect(domainMetrics.paymentVerified).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'real',
+      status: 'pending',
+    });
+    expect(domainMetrics.datasetQueried).not.toHaveBeenCalled();
   });
 });
 
@@ -204,6 +259,16 @@ describe('POST /api/v1/payments/verify/:id/demo', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.demo).toBe(true);
     expect(res.body.ai.summary).toBe('Demo summary');
+    expect(domainMetrics.paymentVerified).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'demo',
+      status: 'delivered',
+    });
+    expect(domainMetrics.datasetQueried).toHaveBeenCalledWith({
+      datasetType: 'yield-data',
+      mode: 'demo',
+      source: 'buyer',
+    });
   });
 
   it('returns 404 when dataset does not exist', async () => {

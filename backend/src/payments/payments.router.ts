@@ -1,12 +1,21 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import { validateBody } from '../common/validate';
+import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
+import { generateDataSummary } from '../ai/claude.service';
+import { sanitizeUserText } from '../common/sanitize';
+import { requireAdminKey } from '../common/auth.middleware';
+import { scheduleRetrySweep } from './payout-retry.service';
+import { transactionEventEmitter } from '../websocket/transaction-events';
+import { domainMetrics } from '../common/datadog';
+import { deliverVerifiedPayment, markDeliveryFailure, processPayment } from './payments.service';
+import { PaymentError, StellarTimeoutError } from './stellar.service';
+import { logger } from '../lib/logger';
 import {
   getDataset,
   updateDataset,
   addTransaction,
-  getFailedDeliveryTransactions,
-  txHashUsed,
   getUnpaidTransactions,
 } from '../common/storage';
 import { validateBody } from '../common/validate';
@@ -32,6 +41,8 @@ import {
 import { PaymentError, StellarTimeoutError } from './stellar.service';
 
 export const paymentsRouter = Router();
+
+// Start the payout retry sweep scheduler
 scheduleRetrySweep(1_000);
 
 const verifySchema = z.object({
@@ -235,12 +246,12 @@ export function startDeliveryRetryWorker(intervalMs = 60_000): void {
   }
 
   void retryFailedDeliveries().catch(error => {
-    console.error('[Escrow] Initial delivery retry run failed:', error);
+    logger.error('[Escrow] Initial delivery retry run failed:', error);
   });
 
   deliveryRetryWorker = setInterval(() => {
     void retryFailedDeliveries().catch(error => {
-      console.error('[Escrow] Delivery retry worker failed:', error);
+      logger.error('[Escrow] Delivery retry worker failed:', error);
     });
   }, intervalMs);
 }
@@ -309,7 +320,7 @@ paymentsRouter.post(
 
       return res.json({
         ...result,
-        warning: null,
+        warning: result.pendingDelivery ? result.warning : null,
       });
     } catch (err) {
       if (err instanceof StellarTimeoutError) {
@@ -365,7 +376,7 @@ paymentsRouter.post(
       summary = result.summary;
       answer = result.answer;
     } catch (err) {
-      console.error('Demo mode AI error:', err);
+      logger.error(`Demo mode AI error: ${err instanceof Error ? err.message : String(err)}`);
       summary = 'Demo mode: AI summary unavailable. Set ANTHROPIC_API_KEY to enable.';
     }
 
@@ -405,8 +416,16 @@ paymentsRouter.post(
       aiSummary: summary,
     });
 
-    // Emit dataset queried event
-    transactionEventEmitter.queryDataset(transactionId, dataset.id, dataset.queriesServed + 1);
+    domainMetrics.paymentVerified({
+      datasetType: dataset.type,
+      mode: 'demo',
+      status: 'delivered',
+    });
+    domainMetrics.datasetQueried({
+      datasetType: dataset.type,
+      mode: 'demo',
+      source: 'buyer',
+    });
 
     return res.json({
       success: true,

@@ -7,6 +7,14 @@ vi.mock('../webhooks/webhook.service', () => ({
   notifySeller: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock('../common/storage', () => ({
+  getAllDatasets: vi.fn(),
+  getDataset: vi.fn(),
+  addDataset: vi.fn(),
+  getTransactions: vi.fn(),
+  getTransactionsCount: vi.fn(),
+}));
+
 const { mockIsValidStellarAddress } = vi.hoisted(() => ({
   mockIsValidStellarAddress: vi.fn<[string], boolean>(),
 }));
@@ -19,9 +27,10 @@ import { datasetsRouter } from './datasets.router';
 import {
   getAllDatasets,
   getDataset,
+  addDataset,
   getTransactions,
   getTransactionsCount,
-} from './datasets.repository';
+} from '../common/storage';
 import type { Dataset, Transaction } from '../common/storage';
 
 const SELLER_A = `G${'A'.repeat(55)}`;
@@ -223,32 +232,99 @@ const validDatasetBody = {
 
 describe('wallet address validation on POST /api/datasets', () => {
   let app: Express;
+  const originalApiKey = process.env.API_KEY;
+  const originalSellerJwtSecret = process.env.SELLER_JWT_SECRET;
 
   beforeEach(async () => {
     app = makeApp();
-    await seedStore({ datasets: [], transactions: [], webhooks: [] });
+    process.env.API_KEY = 'test-api-key';
+    process.env.SELLER_JWT_SECRET = 'test-secret';
+    vi.mocked(getAllDatasets).mockResolvedValue([]);
+    vi.mocked(getDataset).mockResolvedValue(undefined);
+    vi.mocked(getTransactions).mockResolvedValue([]);
+    vi.mocked(getTransactionsCount).mockResolvedValue(0);
+    vi.mocked(addDataset).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    if (originalApiKey === undefined) {
+      delete process.env.API_KEY;
+    } else {
+      process.env.API_KEY = originalApiKey;
+    }
+
+    if (originalSellerJwtSecret === undefined) {
+      delete process.env.SELLER_JWT_SECRET;
+    } else {
+      process.env.SELLER_JWT_SECRET = originalSellerJwtSecret;
+    }
+  });
+
+  it('returns 401 when the auth token is missing', async () => {
+    const res = await request(app).post('/api/v1/datasets').send(validDatasetBody);
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('Authorization header');
   });
 
   it('accepts a valid 56-char G-address and creates the dataset', async () => {
     mockIsValidStellarAddress.mockReturnValue(true);
 
-    const res = await request(app).post('/api/datasets').send(validDatasetBody);
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send(validDatasetBody);
 
     expect(res.status).toBe(201);
     expect(res.body.success).toBe(true);
     expect(res.body.dataset.sellerWallet).toBe(VALID_WALLET);
   });
 
+  it('accepts a seller JWT when the wallet matches the request body', async () => {
+    mockIsValidStellarAddress.mockReturnValue(true);
+
+    const token = signSellerJwt({
+      sellerWallet: VALID_WALLET,
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', `Bearer ${token}`)
+      .send(validDatasetBody);
+
+    expect(res.status).toBe(201);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('rejects a seller JWT when the wallet does not match the request body', async () => {
+    mockIsValidStellarAddress.mockReturnValue(true);
+
+    const token = signSellerJwt({
+      sellerWallet: SELLER_A,
+      exp: Math.floor(Date.now() / 1000) + 60,
+    });
+
+    const res = await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', `Bearer ${token}`)
+      .send(validDatasetBody);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain('does not match');
+  });
+
   it('rejects a wallet address that is too short', async () => {
     mockIsValidStellarAddress.mockReturnValue(false);
 
     const res = await request(app)
-      .post('/api/datasets')
-      .send({ ...validDatasetBody, sellerWallet: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFL' });
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send({
+        ...validDatasetBody,
+        sellerWallet: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFL',
+      });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('Invalid Stellar address');
@@ -258,8 +334,12 @@ describe('wallet address validation on POST /api/datasets', () => {
     mockIsValidStellarAddress.mockReturnValue(false);
 
     const res = await request(app)
-      .post('/api/datasets')
-      .send({ ...validDatasetBody, sellerWallet: 'XBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5' });
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send({
+        ...validDatasetBody,
+        sellerWallet: 'XBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+      });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('Invalid Stellar address');
@@ -269,8 +349,12 @@ describe('wallet address validation on POST /api/datasets', () => {
     mockIsValidStellarAddress.mockReturnValue(false);
 
     const res = await request(app)
-      .post('/api/datasets')
-      .send({ ...validDatasetBody, sellerWallet: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send({
+        ...validDatasetBody,
+        sellerWallet: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('Invalid Stellar address');
@@ -279,7 +363,10 @@ describe('wallet address validation on POST /api/datasets', () => {
   it('calls StrKey.isValidEd25519PublicKey with the submitted wallet address', async () => {
     mockIsValidStellarAddress.mockReturnValue(true);
 
-    await request(app).post('/api/datasets').send(validDatasetBody);
+    await request(app)
+      .post('/api/v1/datasets')
+      .set('Authorization', 'Bearer test-api-key')
+      .send(validDatasetBody);
 
     expect(mockIsValidStellarAddress).toHaveBeenCalledWith(VALID_WALLET);
   });

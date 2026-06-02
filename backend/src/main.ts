@@ -8,15 +8,13 @@ initializeSentry();
 
 import 'express-async-errors';
 import express, { Request, Response, NextFunction } from 'express';
-import pino from 'pino';
+import { logger } from './lib/logger';
 import { randomUUID } from 'crypto';
 import cors from 'cors';
 import path from 'path';
 import http from 'http';
-import rateLimit from 'express-rate-limit';
 import _swaggerUi from 'swagger-ui-express';
 import swaggerJsdoc from 'swagger-jsdoc';
-
 import { datasetsRouter } from './datasets/datasets.router';
 import {
   paymentsRouter,
@@ -25,44 +23,25 @@ import {
   startSellerNotificationRetryWorker,
 } from './payments/payments.router';
 import { agentRouter } from './agent/agent.router';
+import { validateAgentWallet } from './agent/agent.wallet';
 import { webhooksRouter } from './webhooks/webhook.router';
 import { readStore } from './common/storage';
 import { BackupScheduler } from './common/backup.scheduler';
 import { backupRouter, setBackupScheduler } from './common/backup.router';
 import { createCompressionMiddleware } from './common/compression';
+import { requireApiKey } from './common/auth.middleware';
+import { sanitizeBody } from './common/sanitize';
+import {
+  createAgentRateLimitMiddleware,
+  createGlobalRateLimitMiddleware,
+  createPaymentsRateLimitMiddleware,
+} from './common/rateLimit';
 import { initializeWebSocketServer } from './websocket/ws-server';
 import { HORIZON_URL } from './lib/stellar.config';
 import { createCorsOptions } from './common/cors';
-import { sanitizeBody } from './common/sanitize';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-const isProduction = process.env.NODE_ENV === 'production';
-const logger = pino({
-  level: process.env.LOG_LEVEL || 'info',
-  redact: {
-    paths: [
-      'req.headers.authorization',
-      'req.headers.cookie',
-      'headers.authorization',
-      'headers.cookie',
-    ],
-    censor: '[REDACTED]',
-  },
-  ...(isProduction
-    ? {}
-    : {
-        transport: {
-          target: 'pino-pretty',
-          options: {
-            colorize: true,
-            translateTime: 'SYS:standard',
-            ignore: 'pid,hostname',
-          },
-        },
-      }),
-});
 
 const sanitizeHeaders = (headers: Record<string, unknown>) => ({
   ...headers,
@@ -131,45 +110,18 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 app.use(cors(createCorsOptions()));
 app.use(express.json({ limit: '2mb' }));
 app.use(sanitizeBody);
+const globalLimiter = createGlobalRateLimitMiddleware();
+const paymentsLimiter = createPaymentsRateLimitMiddleware();
+const agentLimiter = createAgentRateLimitMiddleware();
 Sentry.setupExpressErrorHandler(app);
 
 // Rate limiting — global + per-route limits for sensitive endpoints
-const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
-const ONE_HOUR_MS = 60 * 60 * 1000;
 
-const isDemoRoute = (req: Request): boolean => req.originalUrl.split('?')[0].endsWith('/demo');
-
-const globalLimiter = rateLimit({
-  windowMs: FIFTEEN_MINUTES_MS,
-  max: 100,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests' },
-});
-
-const strictLimiter = rateLimit({
-  windowMs: FIFTEEN_MINUTES_MS,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: isDemoRoute,
-  message: { error: 'Too many requests' },
-});
-
-const demoLimiter = rateLimit({
-  windowMs: ONE_HOUR_MS,
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests' },
-});
-
-// Demo limiters first (more specific), then strict, then global on /api/v1
-app.use('/api/v1/verify/:id/demo', demoLimiter);
-app.use('/api/v1/agent/research/demo', demoLimiter);
-app.use('/api/v1/verify', strictLimiter);
-app.use('/api/v1/agent/research', strictLimiter);
+// Global rate limiting applies to all routes before route handlers run.
 app.use(globalLimiter);
+app.use('/api/v1/payments', paymentsLimiter);
+app.use('/api/v1/agent', agentLimiter);
+Sentry.setupExpressErrorHandler(app);
 
 // Initialize backup scheduler
 const backupEnabled = process.env.BACKUP_ENABLED !== 'false';
@@ -186,12 +138,12 @@ if (backupEnabled) {
 
   // Graceful shutdown
   process.on('SIGTERM', () => {
-    console.log('[Backup] Stopping backup scheduler...');
+    logger.info('[Backup] Stopping backup scheduler...');
     backupScheduler.stop();
   });
 
   process.on('SIGINT', () => {
-    console.log('[Backup] Stopping backup scheduler...');
+    logger.info('[Backup] Stopping backup scheduler...');
     backupScheduler.stop();
     process.exit(0);
   });
@@ -219,7 +171,7 @@ const _swaggerDocs = swaggerJsdoc(swaggerOptions);
 // Health check with service monitoring
 const HEALTH_TIMEOUT_MS = 3000;
 
-type CheckResult = 'ok' | 'error';
+type CheckResult = 'ok' | 'error' | 'unavailable';
 
 async function withHealthTimeout(fn: () => Promise<CheckResult>): Promise<CheckResult> {
   return Promise.race<CheckResult>([
@@ -238,7 +190,11 @@ async function checkStorage(): Promise<CheckResult> {
 }
 
 async function checkAnthropic(): Promise<CheckResult> {
-  return process.env.ANTHROPIC_API_KEY ? 'ok' : 'error';
+  // Anthropic is optional; missing key is unavailable but not an error
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return 'unavailable';
+  }
+  return 'ok';
 }
 
 async function checkStellar(): Promise<CheckResult> {
@@ -265,10 +221,19 @@ app.get('/health', async (_req, res) => {
   ]);
 
   const checks = { storage, anthropic, stellar };
-  const allOk = storage === 'ok' && anthropic === 'ok' && stellar === 'ok';
 
-  res.status(allOk ? 200 : 503).json({
-    status: allOk ? 'ok' : 'degraded',
+  // Critical services — any error here means unhealthy
+  const criticalOk = storage === 'ok' && stellar === 'ok';
+
+  // Overall status — degraded if optional service (anthropic) unavailable
+  const allOk = criticalOk && anthropic === 'ok';
+  const status = allOk ? 'ok' : 'degraded';
+
+  // HTTP status code — only return 503 if critical services fail
+  const httpStatus = criticalOk ? 200 : 503;
+
+  res.status(httpStatus).json({
+    status,
     checks,
     timestamp: new Date().toISOString(),
   });
@@ -276,23 +241,33 @@ app.get('/health', async (_req, res) => {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason: unknown) => {
-  console.error('[Unhandled Rejection]', reason);
-  Sentry.captureException(reason);
+  logger.error(
+    `[Unhandled Rejection]: ${reason instanceof Error ? reason.message : String(reason)}`,
+  );
+  Sentry.withScope(scope => {
+    scope.setTag('source', 'unhandledRejection');
+    scope.setLevel('error');
+    Sentry.captureException(reason);
+  });
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (err: Error) => {
-  console.error('[Uncaught Exception]', err);
-  Sentry.captureException(err);
+  logger.error(`[Uncaught Exception]: ${err.message}`);
+  Sentry.withScope(scope => {
+    scope.setTag('source', 'uncaughtException');
+    scope.setLevel('fatal');
+    Sentry.captureException(err);
+  });
 });
 
 // Routes under versioned API namespace.
 const v1Router = express.Router();
 
 v1Router.use('/datasets', datasetsRouter);
-v1Router.use('/agent', agentRouter);
+v1Router.use('/agent', requireApiKey, agentRouter);
 v1Router.use('/webhooks', webhooksRouter);
-v1Router.use('/payments', paymentsRouter);
+v1Router.use('/payments', requireApiKey, paymentsRouter);
 v1Router.use('/backups', backupRouter);
 
 app.use('/api/v1', v1Router);
@@ -312,15 +287,29 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
 // Global error handling middleware — Issue #283 (standard error shape)
 app.use(
   (
-    err: Error & { status?: number; code?: string },
+    err: { status?: number; message?: string; code?: string },
     req: Request,
     res: Response,
     _next: NextFunction,
   ) => {
     const status = err.status ?? 500;
     const message = err.message || 'Internal server error';
-    console.error(`[Global Error Handler] [requestId=${req.id}]`, err);
-    Sentry.captureException(err);
+    // SECURITY: Use the structured logger (not logger.error) so pino's redact
+    // rules fire before the record is shipped to Datadog. Passing the raw Error
+    // object is intentional — pino serialises it safely. Never interpolate
+    // err.message into a template string here as it may include key material.
+    logger.error({ requestId: req.id, status, err }, 'Unhandled request error');
+    Sentry.withScope(scope => {
+      scope.setTag('requestId', req.id);
+      scope.setTag('method', req.method);
+      scope.setTag('url', req.originalUrl);
+      scope.setContext('request', {
+        id: req.id,
+        method: req.method,
+        url: req.originalUrl,
+      });
+      Sentry.captureException(err);
+    });
     res
       .status(status)
       .json({ error: message, code: err.code || 'INTERNAL_ERROR', requestId: req.id });
@@ -343,33 +332,42 @@ app.get('/api/v1/ws/stats', (_req: Request, res: Response) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`\n  ██╗  ██╗ █████╗ ███████╗██╗███╗   ██╗ █████╗`);
-  console.log(`  ██║  ██║██╔══██╗╚══███╔╝██║████╗  ██║██╔══██╗`);
-  console.log(`  ███████║███████║  ███╔╝ ██║██╔██╗ ██║███████║`);
-  console.log(`  ██╔══██║██╔══██║ ███╔╝  ██║██║╚██╗██║██╔══██║`);
-  console.log(`  ██║  ██║██║  ██║███████╗██║██║ ╚████║██║  ██║`);
-  console.log(`  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝`);
-  console.log(`\n  Data Escrow API running on http://localhost:${PORT}`);
-  console.log(`  WebSocket server running on ws://localhost:${PORT}/ws\n`);
+  logger.info(`\n  ██╗  ██╗ █████╗ ███████╗██╗███╗   ██╗ █████╗`);
+  logger.info(`  ██║  ██║██╔══██╗╚══███╔╝██║████╗  ██║██╔══██╗`);
+  logger.info(`  ███████║███████║  ███╔╝ ██║██╔██╗ ██║███████║`);
+  logger.info(`  ██╔══██║██╔══██║ ███╔╝  ██║██║╚██╗██║██╔══██║`);
+  logger.info(`  ██║  ██║██║  ██║███████╗██║██║ ╚████║██║  ██║`);
+  logger.info(`  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝`);
+  logger.info(`\n  Data Escrow API running on http://localhost:${PORT}`);
+  logger.info(`  WebSocket server running on ws://localhost:${PORT}/ws\n`);
+
+  // SECURITY: Validate agent wallet at startup — logs the PUBLIC key only.
+  // If the secret is absent (e.g. demo mode) this logs a warning instead of
+  // throwing so the rest of the server can still start.
+  try {
+    validateAgentWallet();
+  } catch (err) {
+    logger.warn({ err }, '[AgentWallet] Wallet not configured — agent payment features disabled');
+  }
 });
 
 // Graceful shutdown for WebSocket server
 process.on('SIGTERM', () => {
-  console.log('[Server] Shutting down gracefully...');
+  logger.info('[Server] Shutting down gracefully...');
   stopDeliveryRetryWorker();
   wsServer.shutdown();
   server.close(() => {
-    console.log('[Server] HTTP server closed');
+    logger.info('[Server] HTTP server closed');
     process.exit(0);
   });
 });
 
 process.on('SIGINT', () => {
-  console.log('[Server] Shutting down gracefully...');
+  logger.info('[Server] Shutting down gracefully...');
   stopDeliveryRetryWorker();
   wsServer.shutdown();
   server.close(() => {
-    console.log('[Server] HTTP server closed');
+    logger.info('[Server] HTTP server closed');
     process.exit(0);
   });
 });

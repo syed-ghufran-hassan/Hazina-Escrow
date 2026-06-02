@@ -14,11 +14,11 @@ import {
   Check,
   RotateCcw,
 } from 'lucide-react';
-import { api, DatasetMeta } from '../lib/api';
+import { api, DatasetMeta, PaginatedDatasets } from '../lib/api';
 import { DATA_TYPE_META } from '../lib/utils';
 import DatasetCard from '../components/ui/DatasetCard';
 import QueryModal from '../components/ui/QueryModal';
-import { DatasetCardSkeleton } from '../components/ui/SkeletonLoader';
+import { DatasetCardSkeleton, Skeleton } from '../components/ui/SkeletonLoader';
 import clsx from 'clsx';
 import { useI18n } from '../i18n';
 import { useTransactionWebSocket } from '../hooks/useTransactionWebSocket';
@@ -27,19 +27,18 @@ import { WebSocketStatus } from '../components/ui/WebSocketStatus';
 export default function MarketplacePage() {
   const { locale, t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
-  
+
   // Initialize state from URL parameters
   const [searchInput, setSearchInput] = useState(searchParams.get('q') || '');
   const [search, setSearch] = useState(searchParams.get('q') || '');
   const [selectedTypes, setSelectedTypes] = useState<string[]>(
-    searchParams.get('types')?.split(',').filter(Boolean) || []
+    searchParams.get('types')?.split(',').filter(Boolean) || [],
   );
   const [minPrice, setMinPrice] = useState(searchParams.get('minPrice') || '');
   const [maxPrice, setMaxPrice] = useState(searchParams.get('maxPrice') || '');
   const [minQueries, setMinQueries] = useState(searchParams.get('minQueries') || '');
   const [sort, setSort] = useState(searchParams.get('sort') || 'popular');
-  
-  const pageSize = 20;
+
   const pageParam = parseInt(searchParams.get('page') || '1', 10);
   const page = Number.isFinite(pageParam) && pageParam >= 1 ? pageParam : 1;
   const setPage = (nextPage: number) => {
@@ -59,21 +58,21 @@ export default function MarketplacePage() {
   // Sync filter state to URL parameters
   useEffect(() => {
     const updatedParams = new URLSearchParams(searchParams);
-    
+
     // Update search query
     if (search) {
       updatedParams.set('q', search);
     } else {
       updatedParams.delete('q');
     }
-    
+
     // Update type filters
     if (selectedTypes.length > 0) {
       updatedParams.set('types', selectedTypes.join(','));
     } else {
       updatedParams.delete('types');
     }
-    
+
     // Update price range
     if (minPrice) {
       updatedParams.set('minPrice', minPrice);
@@ -85,17 +84,17 @@ export default function MarketplacePage() {
     } else {
       updatedParams.delete('maxPrice');
     }
-    
+
     // Update min queries
     if (minQueries) {
       updatedParams.set('minQueries', minQueries);
     } else {
       updatedParams.delete('minQueries');
     }
-    
+
     // Update sort
     updatedParams.set('sort', sort);
-    
+
     // Only update if params changed to avoid infinite loop
     const paramString = updatedParams.toString();
     if (paramString !== searchParams.toString()) {
@@ -107,7 +106,7 @@ export default function MarketplacePage() {
     data,
     isLoading: loading,
     refetch,
-  } = useQuery({
+  } = useQuery<PaginatedDatasets>({
     queryKey: ['datasets', page, search, selectedTypes, minPrice, maxPrice, minQueries, sort],
     queryFn: () =>
       api.getDatasets({
@@ -124,7 +123,7 @@ export default function MarketplacePage() {
 
   const datasets = data?.data || [];
   const total = data?.total || 0;
-  const pageSize = data?.pageSize || requestedPageSize;
+  const pageSize = requestedPageSize;
   const totalPages = data?.totalPages || 1;
 
   // WebSocket connection for real-time updates
@@ -138,7 +137,7 @@ export default function MarketplacePage() {
         // Refetch when new queries come in
         refetch();
       },
-    }
+    },
   );
 
   useEffect(() => {
@@ -185,7 +184,9 @@ export default function MarketplacePage() {
 
   const toggleTypeFilter = (type: string) => {
     setSelectedTypes((current: string[]) =>
-      current.includes(type) ? current.filter((value: string) => value !== type) : [...current, type],
+      current.includes(type)
+        ? current.filter((value: string) => value !== type)
+        : [...current, type],
     );
   };
 
@@ -232,9 +233,7 @@ export default function MarketplacePage() {
             <h1 className="font-display text-4xl md:text-5xl font-bold text-foreground">
               {t('marketplace.title')}
             </h1>
-            {datasets.length > 0 && (
-              <WebSocketStatus connected={wsConnected} error={wsError} />
-            )}
+            {datasets.length > 0 && <WebSocketStatus connected={wsConnected} error={wsError} />}
           </div>
           <p className="text-foreground-muted font-body text-lg">{t('marketplace.subtitle')}</p>
         </div>
@@ -249,7 +248,7 @@ export default function MarketplacePage() {
                 type="text"
                 placeholder={t('marketplace.searchPlaceholder')}
                 value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
+                onChange={e => setSearchInput(e.target.value)}
                 className="w-full bg-void/60 border border-border/60 rounded-xl pl-11 pr-4 py-3 text-sm font-body text-foreground placeholder:text-muted focus:outline-none focus:border-gold/40 transition-colors"
               />
               {searchInput && (
@@ -377,34 +376,37 @@ export default function MarketplacePage() {
         </div>
 
         {/* Results count */}
-        <div className="flex items-center justify-between mb-6">
-          <p className="text-sm text-foreground-muted font-body">
-            {loading ? (
-              t('common.labels.loading')
-            ) : (
-              <>
-                {t('marketplace.pagination.showing', {
-                  start: pageStart.toLocaleString(locale),
-                  end: pageEnd.toLocaleString(locale),
-                  total: total.toLocaleString(locale),
-                })}
-              </>
-            )}
-          </p>
-          {!loading && datasets.length > 0 && (
+        <div className="flex items-center justify-between gap-4 mb-6" aria-busy={loading}>
+          {loading ? (
+            <div className="space-y-2">
+              <Skeleton variant="text" width={240} height={16} />
+              <Skeleton variant="text" width={160} height={12} />
+            </div>
+          ) : (
+            <p className="text-sm text-foreground-muted font-body">
+              {t('marketplace.pagination.showing', {
+                start: pageStart.toLocaleString(locale),
+                end: pageEnd.toLocaleString(locale),
+                total: total.toLocaleString(locale),
+              })}
+            </p>
+          )}
+          {loading ? (
+            <Skeleton variant="text" width={88} height={14} />
+          ) : datasets.length > 0 ? (
             <p className="text-sm text-foreground-muted font-body">
               {t('marketplace.pagination.page', {
                 current: currentPage.toLocaleString(locale),
                 total: totalPages.toLocaleString(locale),
               })}
             </p>
-          )}
+          ) : null}
         </div>
 
         {/* Grid */}
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {Array.from({ length: 6 }).map((_, i) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" aria-busy="true">
+            {Array.from({ length: 8 }).map((_, i) => (
               <DatasetCardSkeleton key={i} />
             ))}
           </div>

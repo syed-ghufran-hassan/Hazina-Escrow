@@ -1,5 +1,6 @@
 import { promises as fs, existsSync } from 'fs';
 import path from 'path';
+import { logger } from '../lib/logger';
 
 const DATA_PATH = path.join(__dirname, '../../../data/datasets.json');
 
@@ -34,7 +35,7 @@ export class BackupService {
   private async ensureBackupDirectory(): Promise<void> {
     if (!existsSync(this.config.backupDir)) {
       await fs.mkdir(this.config.backupDir, { recursive: true });
-      console.log(`[Backup] Created backup directory: ${this.config.backupDir}`);
+      logger.info(`[Backup] Created backup directory: ${this.config.backupDir}`);
     }
   }
 
@@ -82,16 +83,16 @@ export class BackupService {
         transactionsCount,
       };
 
-      console.log(
+      logger.info(
         `[Backup] Created backup: ${filename} (${this.formatBytes(stats.size)}, ` +
-        `${datasetsCount} datasets, ${transactionsCount} transactions)`,
+          `${datasetsCount} datasets, ${transactionsCount} transactions)`,
       );
 
       await this.rotateBackups();
       return metadata;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`[Backup] Failed to create backup: ${message}`);
+      logger.error(`[Backup] Failed to create backup: ${message}`);
       throw error;
     }
   }
@@ -113,9 +114,9 @@ export class BackupService {
               path: filePath,
               mtime: stats.mtime,
             };
-          })
+          }),
       );
-      
+
       files.sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
 
       // Delete old backups beyond maxBackups
@@ -123,12 +124,12 @@ export class BackupService {
         const toDelete = files.slice(this.config.maxBackups);
         for (const file of toDelete) {
           await fs.unlink(file.path);
-          console.log(`[Backup] Rotated old backup: ${file.name}`);
+          logger.info(`[Backup] Rotated old backup: ${file.name}`);
         }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`[Backup] Failed to rotate backups: ${message}`);
+      logger.error(`[Backup] Failed to rotate backups: ${message}`);
     }
   }
 
@@ -140,13 +141,13 @@ export class BackupService {
       await this.ensureBackupDirectory();
       const filesList = await fs.readdir(this.config.backupDir);
       const backupFiles = filesList.filter(f => f.startsWith('backup-') && f.endsWith('.json'));
-      
+
       const backups = await Promise.all(
         backupFiles.map(async f => {
           const filePath = path.join(this.config.backupDir, f);
           const stats = await fs.stat(filePath);
           const content = JSON.parse(await fs.readFile(filePath, 'utf-8'));
-          
+
           return {
             timestamp: content.metadata?.timestamp || stats.mtime.toISOString(),
             filename: f,
@@ -154,13 +155,15 @@ export class BackupService {
             datasetsCount: content.metadata?.datasetsCount || 0,
             transactionsCount: content.metadata?.transactionsCount || 0,
           };
-        })
+        }),
       );
 
-      return backups.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      return backups.sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`[Backup] Failed to list backups: ${message}`);
+      logger.error(`[Backup] Failed to list backups: ${message}`);
       return [];
     }
   }
@@ -171,7 +174,7 @@ export class BackupService {
   async restoreBackup(filename: string): Promise<void> {
     try {
       const backupPath = path.join(this.config.backupDir, filename);
-      
+
       if (!existsSync(backupPath)) {
         throw new Error(`Backup file not found: ${filename}`);
       }
@@ -181,7 +184,7 @@ export class BackupService {
       // Create a safety backup before restoring
       const safetyBackup = `pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
       const safetyPath = path.join(this.config.backupDir, safetyBackup);
-      
+
       // Read current data and save as safety backup
       if (existsSync(DATA_PATH)) {
         const currentData = JSON.parse(await fs.readFile(DATA_PATH, 'utf-8'));
@@ -200,11 +203,11 @@ export class BackupService {
       // Restore the backup
       await fs.writeFile(DATA_PATH, JSON.stringify(backupContent.data, null, 2), 'utf-8');
 
-      console.log(`[Backup] Restored from backup: ${filename}`);
-      console.log(`[Backup] Safety backup created: ${safetyBackup}`);
+      logger.info(`[Backup] Restored from backup: ${filename}`);
+      logger.info(`[Backup] Safety backup created: ${safetyBackup}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error(`[Backup] Failed to restore backup: ${message}`);
+      logger.error(`[Backup] Failed to restore backup: ${message}`);
       throw error;
     }
   }
@@ -219,7 +222,7 @@ export class BackupService {
     newestBackup: string | null;
   }> {
     const backups = await this.listBackups();
-    
+
     return {
       totalBackups: backups.length,
       totalSize: backups.reduce((sum, b) => sum + b.size, 0),
@@ -236,7 +239,6 @@ export class BackupService {
     const k = 1024;
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
   }
 }
-

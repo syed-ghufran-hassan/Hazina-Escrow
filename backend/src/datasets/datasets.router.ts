@@ -1,20 +1,24 @@
 import { Router, Request, Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { StrKey } from '@stellar/stellar-sdk';
+import { v4 as uuidv4 } from 'uuid';
+import { sanitizeUserText } from '../common/sanitize';
+import { validateBody } from '../common/validate';
 import {
+  addDataset,
   getAllDatasets,
   getDataset,
-  addDataset,
   getTransactions,
   getTransactionsCount,
-} from './datasets.repository';
-import type { Dataset } from '../common/storage';
-import { validateBody } from '../common/validate';
-import { sanitizeUserText } from '../common/sanitize';
+  type Dataset,
+} from '../common/storage';
+import { requireSellerJwt, requireSellerMutationAuth } from '../common/auth.middleware';
+import { domainMetrics } from '../common/datadog';
 import { notifySeller } from '../webhooks/webhook.service';
-import { requireApiKey, requireSellerJwt } from '../common/auth.middleware';
-const MAX_DATA_BYTES = 500 * 1024;
+
+const MAX_DATA_KB = 500;
+const MAX_DATA_BYTES = MAX_DATA_KB * 1024;
+
 const makeSanitizedTextField = (fieldName: string, maxLength: number) =>
   z
     .string()
@@ -62,7 +66,7 @@ const dataField = z
     if (Buffer.byteLength(JSON.stringify(parsed), 'utf8') > MAX_DATA_BYTES) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'data exceeds 500 KB limit',
+        message: `data exceeds ${MAX_DATA_KB} KB limit`,
       });
       return z.NEVER;
     }
@@ -74,7 +78,10 @@ const createDatasetSchema = z.object({
   description: makeSanitizedTextField('description', 2000),
   type: makeSanitizedTextField('type', 100),
   pricePerQuery: z.coerce.number().finite().positive(),
-  sellerWallet: z.string().trim().refine(StrKey.isValidEd25519PublicKey, { message: 'Invalid Stellar address' }),
+  sellerWallet: z
+    .string()
+    .trim()
+    .refine(StrKey.isValidEd25519PublicKey, { message: 'Invalid Stellar address' }),
   data: dataField,
 });
 
@@ -218,8 +225,7 @@ datasetsRouter.get('/', async (req: Request, res: Response) => {
   const parsedPage = Number.parseInt(req.query.page as string, 10);
   const parsedLimit = Number.parseInt(req.query.limit as string, 10);
   const page = Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1;
-  const limit =
-    Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20;
+  const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 100) : 20;
   const search = ((req.query.search as string) || '').toLowerCase();
   const types = [req.query.type]
     .flat()
@@ -520,7 +526,7 @@ datasetsRouter.get('/:id/transactions', requireSellerJwt, async (req: Request, r
  */
 datasetsRouter.post(
   '/',
-  requireApiKey,
+  requireSellerMutationAuth,
   validateBody(createDatasetSchema),
   async (req: Request, res: Response) => {
     const { name, description, type, pricePerQuery, sellerWallet, data } = req.body as z.infer<
@@ -541,6 +547,12 @@ datasetsRouter.post(
     };
 
     await addDataset(dataset);
+
+    // Track dataset creation
+    domainMetrics.datasetCreated({
+      datasetType: type,
+      pricePerQuery,
+    });
 
     // Notify seller via webhook
     notifySeller(dataset.sellerWallet, 'dataset.created', {

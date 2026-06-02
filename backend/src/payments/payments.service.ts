@@ -1,7 +1,10 @@
-import { v4 as uuidv4 } from 'uuid';
+import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
+import { generateDataSummary } from '../ai/claude.service';
+import { notifySeller } from '../webhooks/webhook.service';
+import { transactionEventEmitter } from '../websocket/transaction-events';
+import { verifyStellarPayment, PaymentError } from './stellar.service';
 import {
   getDataset,
-  updateDataset,
   getTransactionByHash,
   updateTransactionByHash,
   addTransaction,
@@ -102,6 +105,12 @@ export async function deliverVerifiedPayment(params: {
     });
   });
 
+  domainMetrics.datasetQueried({
+    datasetType: dataset.type,
+    mode: txHash.startsWith('demo-') ? 'demo' : 'real',
+    source: 'buyer',
+  });
+
   return {
     success: true,
     data: dataset.data,
@@ -135,11 +144,13 @@ export async function markDeliveryFailure(params: {
 
   const message = error instanceof Error ? error.message : String(error);
   const existing = await getTransactionByHash(txHash);
+  const attempts = (existing?.deliveryAttempts ?? 0) + 1;
+
   await updateTransactionByHash(txHash, {
-    status: "delivery_failed",
-    deliveryStatus: "failed",
+    status: 'delivery_failed',
+    deliveryStatus: 'failed',
     deliveryError: message,
-    deliveryAttempts: (existing?.deliveryAttempts ?? 0) + 1,
+    deliveryAttempts: attempts,
     buyerQuery: buyerQuestion,
   });
 
@@ -150,14 +161,29 @@ export async function markDeliveryFailure(params: {
     error: message,
   });
 
+  // Track delivery failure and retry attempt
+  domainMetrics.paymentDeliveryFailed({
+    datasetType: dataset.type,
+    mode: txHash.startsWith('demo-') ? 'demo' : 'real',
+    reason: message.toLowerCase().includes('ai') ? 'ai_error' : 'delivery_error',
+  });
+
+  domainMetrics.deliveryRetryAttempt({
+    datasetType: dataset.type,
+    mode: txHash.startsWith('demo-') ? 'demo' : 'real',
+    attempt: attempts,
+  });
+
   return {
     success: true,
     pendingDelivery: true,
     warning: 'DELIVERY_PENDING_RETRY' as const,
     transaction: {
       hash: txHash,
-      status: "delivery_failed",
-      deliveryStatus: "failed",
+      status: 'delivery_failed',
+      deliveryStatus: 'failed',
+      //       status: "delivery_failed",
+      //       deliveryStatus: "failed",
       amount: dataset.pricePerQuery,
       sellerReceived: sellerShare(dataset.pricePerQuery),
       platformFee: computePlatformFee(dataset.pricePerQuery),
@@ -216,6 +242,12 @@ export async function processPayment(params: {
   });
 
   if (!verification.valid) {
+    const mode = txHash.startsWith('demo-') ? 'demo' : 'real';
+    domainMetrics.paymentVerificationError({
+      mode,
+      errorType: verification.reason?.toLowerCase().replace(/\s+/g, '_') || 'unknown',
+    });
+
     transactionEventEmitter.updateTransactionStatus(transactionId, dataset.id, 'failed', {
       error: verification.reason || 'Stellar payment verification failed',
     });
@@ -258,34 +290,6 @@ export async function processPayment(params: {
   if (!memoOwner) {
     throw new Error(
       'Payment memo does not match any pending transaction — ensure you used the memo from your query initiation',
-    );
-  }
-  if (memoOwner.datasetId !== datasetId) {
-    throw new Error(
-      'Payment memo belongs to a different dataset — use the memo generated for this specific query',
-    );
-    throw new PaymentError(verification.reason || "Stellar payment verification failed");
-  }
-
-  // Bind the payment to this specific dataset via its memo.
-  // Without this check a buyer could redirect a payment made for dataset A (using
-  // its memo) to unlock dataset B if both share the same price — the memo on the
-  // Stellar transaction is the only artefact that ties a payment to a purchase.
-  const txMemo = verification.memo ?? '';
-  if (!txMemo) {
-    throw new PaymentError(
-      'Payment must include the memo provided at query initiation — memo-less payments cannot be bound to a specific dataset',
-    );
-  }
-  const memoOwner = await getTransactionByMemo(txMemo);
-  if (!memoOwner) {
-    throw new PaymentError(
-      'Payment memo does not match any pending transaction — ensure you used the memo from your query initiation',
-    );
-  }
-  if (memoOwner.datasetId !== datasetId) {
-    throw new PaymentError(
-      'Payment memo belongs to a different dataset — use the memo generated for this specific query',
     );
   }
 
@@ -335,9 +339,22 @@ export async function processPayment(params: {
 
     transactionEventEmitter.queryDataset(transactionId, dataset.id, dataset.queriesServed + 1);
 
+    domainMetrics.paymentVerified({
+      datasetType: dataset.type,
+      mode: 'real',
+      status: 'delivered',
+    });
+
     return response;
   } catch (deliveryErr) {
-    console.error('[Escrow] Delivery failed — queued for retry:', deliveryErr);
+    logger.error(
+      `[Escrow] Delivery failed — queued for retry: ${deliveryErr instanceof Error ? deliveryErr.message : String(deliveryErr)}`,
+    );
+    domainMetrics.paymentVerified({
+      datasetType: dataset.type,
+      mode: 'real',
+      status: 'pending',
+    });
     return await markDeliveryFailure({
       transactionId,
       txHash,

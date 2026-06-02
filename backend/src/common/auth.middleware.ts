@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import { logger } from '../lib/logger';
 
 const STELLAR_ADDRESS_REGEX = /^G[A-Z2-7]{55}$/;
 
@@ -28,7 +29,7 @@ function makeBearerMiddleware(envVar: string, label: string) {
       if (process.env.NODE_ENV === 'production') {
         return res.status(503).json({ error: `Server misconfigured: ${envVar} is not set` });
       }
-      console.warn(`[auth] ${envVar} not set — skipping ${label} check in non-production`);
+      logger.warn(`[auth] ${envVar} not set — skipping ${label} check in non-production`);
       return next();
     }
 
@@ -138,6 +139,58 @@ function verifySellerJwt(token: string, secret: string): SellerJwtClaims | null 
     iat: typeof iat === 'number' ? iat : undefined,
     nbf: typeof nbf === 'number' ? nbf : undefined,
   };
+}
+
+function getBearerToken(authHeader: string | undefined): string | null {
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  const token = authHeader.slice(7).trim();
+  return token.length > 0 ? token : null;
+}
+
+function getRequestWallet(req: Request, walletField: string): string | null {
+  const body = req.body;
+  if (!body || typeof body !== 'object') return null;
+
+  const value = (body as Record<string, unknown>)[walletField];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+/**
+ * Accepts either the shared API key or a seller JWT.
+ * When a seller JWT is used, the wallet in the request body must match the JWT claim.
+ */
+export function requireSellerMutationAuth(req: Request, res: Response, next: NextFunction) {
+  const token = getBearerToken(req.headers.authorization);
+  if (!token) {
+    return res.status(401).json({ error: 'Authorization header missing or not Bearer' });
+  }
+
+  const apiKey = process.env.API_KEY;
+  if (apiKey && token === apiKey) {
+    return next();
+  }
+
+  const secret = process.env.SELLER_JWT_SECRET;
+  if (!secret) {
+    return apiKey
+      ? res.status(403).json({ error: 'Invalid API key' })
+      : res.status(503).json({ error: 'Server misconfigured: SELLER_JWT_SECRET is not set' });
+  }
+
+  const claims = verifySellerJwt(token, secret);
+  if (!claims) {
+    return apiKey
+      ? res.status(403).json({ error: 'Invalid API key' })
+      : res.status(401).json({ error: 'Invalid or expired seller token' });
+  }
+
+  const requestWallet = getRequestWallet(req, 'sellerWallet');
+  if (requestWallet && requestWallet !== claims.sellerWallet) {
+    return res.status(403).json({ error: 'Authenticated wallet does not match request body' });
+  }
+
+  req.sellerAuth = claims;
+  next();
 }
 
 /** Protects seller dashboard reads with a non-optional, expiring HS256 JWT. */

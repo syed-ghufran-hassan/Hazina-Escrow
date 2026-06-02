@@ -2,7 +2,6 @@ import { Server as HTTPServer, IncomingMessage } from 'http';
 import type { RawData } from 'ws';
 import { WebSocketServer, WebSocket } from 'ws';
 
-import { randomUUID } from 'crypto';
 import { Sentry } from '../common/sentry';
 import { transactionEventEmitter } from './transaction-events';
 import {
@@ -13,6 +12,7 @@ import {
   SubscribeMessage,
   UnsubscribeMessage,
 } from './ws.types';
+import { logger } from '../lib/logger';
 
 interface ClientSession {
   ws: WebSocket;
@@ -31,9 +31,6 @@ export class WebSocketServer_Hazina {
   private clients: Map<string, ClientSession> = new Map();
   private clientCounter: number = 0;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-
-  // private clientCounter: number = 0; // Removed - using UUID instead
-  private heartbeatInterval: NodeJS.Timer | null = null;
   private apiKey: string;
   private readonly MAX_SUBSCRIPTIONS_PER_CLIENT = 100; // Prevent memory exhaustion attacks
 
@@ -56,7 +53,7 @@ export class WebSocketServer_Hazina {
     // Listen for transaction events
     this.attachEventListeners();
 
-    console.log('[WebSocket] Server initialized on /ws with 64KB payload limit');
+    logger.info('[WebSocket] Server initialized on /ws with 64KB payload limit');
   }
 
   /**
@@ -64,8 +61,6 @@ export class WebSocketServer_Hazina {
    */
   private handleConnection(ws: WebSocket, _req: IncomingMessage): void {
     const clientId = `client_${++this.clientCounter}`;
-  private handleConnection(ws: WebSocket, _req: unknown): void {
-    const clientId = `client_${randomUUID()}`;
     const session: ClientSession = {
       ws,
       subscribed: {
@@ -76,7 +71,7 @@ export class WebSocketServer_Hazina {
     };
 
     this.clients.set(clientId, session);
-    console.log(`[WebSocket] Client connected: ${clientId}`);
+    logger.info(`[WebSocket] Client connected: ${clientId}`);
 
     // Handle client messages
     ws.on('message', data => {
@@ -85,7 +80,9 @@ export class WebSocketServer_Hazina {
 
     // Handle connection errors
     ws.on('error', error => {
-      console.error(`[WebSocket] Error for ${clientId}:`, error);
+      logger.error(
+        `[WebSocket] Error for ${clientId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
       Sentry.captureException(error, { tags: { clientId } });
     });
 
@@ -93,7 +90,7 @@ export class WebSocketServer_Hazina {
     ws.on('close', () => {
       this.clients.delete(clientId);
 
-      console.log(`[WebSocket] Client disconnected: ${clientId} | Remaining: ${this.clients.size}`);
+      logger.info(`[WebSocket] Client disconnected: ${clientId} | Remaining: ${this.clients.size}`);
     });
 
     // Handle pong responses for heartbeat
@@ -108,7 +105,8 @@ export class WebSocketServer_Hazina {
   /**
    * Handle incoming client messages
    */
-  private handleMessage(clientId: string, data: any): void {
+
+  private handleMessage(clientId: string, data: RawData): void {
     const session = this.clients.get(clientId);
     if (!session) return;
 
@@ -165,7 +163,7 @@ export class WebSocketServer_Hazina {
         `Subscription limit exceeded. Maximum ${this.MAX_SUBSCRIPTIONS_PER_CLIENT} subscriptions per client.`,
         'SUBSCRIPTION_LIMIT_EXCEEDED',
       );
-      console.warn(
+      logger.warn(
         `[WebSocket] ${clientId} exceeded subscription limit (${totalAfterSubscribe}/${this.MAX_SUBSCRIPTIONS_PER_CLIENT})`,
       );
       return;
@@ -176,7 +174,7 @@ export class WebSocketServer_Hazina {
       msg.datasetIds.forEach(id => {
         session.subscribed.datasetIds.add(id);
       });
-      console.log(`[WebSocket] ${clientId} subscribed to datasets: ${msg.datasetIds.join(', ')}`);
+      logger.info(`[WebSocket] ${clientId} subscribed to datasets: ${msg.datasetIds.join(', ')}`);
     }
 
     // Subscribe to transactions
@@ -184,7 +182,7 @@ export class WebSocketServer_Hazina {
       msg.transactionIds.forEach(id => {
         session.subscribed.transactionIds.add(id);
       });
-      console.log(
+      logger.info(
         `[WebSocket] ${clientId} subscribed to transactions: ${msg.transactionIds.join(', ')}`,
       );
     }
@@ -218,7 +216,7 @@ export class WebSocketServer_Hazina {
       });
     }
 
-    console.log(`[WebSocket] ${clientId} unsubscribed`);
+    logger.info(`[WebSocket] ${clientId} unsubscribed`);
   }
 
   /**
@@ -230,10 +228,6 @@ export class WebSocketServer_Hazina {
         return (
           session.subscribed.datasetIds.has(evt.data.datasetId) ||
           session.subscribed.transactionIds.has(evt.data.transactionId)
-        const dataEvent = evt as unknown;
-        return (
-          session.subscribed.datasetIds.has(dataEvent.data.datasetId) ||
-          session.subscribed.transactionIds.has(dataEvent.data.transactionId)
         );
       });
     });
@@ -243,10 +237,6 @@ export class WebSocketServer_Hazina {
         return (
           session.subscribed.datasetIds.has(evt.data.datasetId) ||
           session.subscribed.transactionIds.has(evt.data.transactionId)
-        const dataEvent = evt as unknown;
-        return (
-          session.subscribed.datasetIds.has(dataEvent.data.datasetId) ||
-          session.subscribed.transactionIds.has(dataEvent.data.transactionId)
         );
       });
     });
@@ -256,11 +246,6 @@ export class WebSocketServer_Hazina {
         return (
           session.subscribed.datasetIds.has(evt.data.datasetId) ||
           session.subscribed.transactionIds.has(evt.data.transactionId)
-
-        const dataEvent = evt as unknown;
-        return (
-          session.subscribed.datasetIds.has(dataEvent.data.datasetId) ||
-          session.subscribed.transactionIds.has(dataEvent.data.transactionId)
         );
       });
     });
@@ -270,10 +255,6 @@ export class WebSocketServer_Hazina {
         return (
           session.subscribed.datasetIds.has(evt.data.datasetId) ||
           session.subscribed.transactionIds.has(evt.data.transactionId)
-        const dataEvent = evt as unknown;
-        return (
-          session.subscribed.datasetIds.has(dataEvent.data.datasetId) ||
-          session.subscribed.transactionIds.has(dataEvent.data.transactionId)
         );
       });
     });
@@ -309,7 +290,6 @@ export class WebSocketServer_Hazina {
     clientId: string,
     message: ServerEvent | PongMessage | ErrorMessage | Record<string, unknown>,
   ): void {
-  private sendMessage(clientId: string, message: unknown): void {
     const session = this.clients.get(clientId);
     if (session && session.ws.readyState === WebSocket.OPEN) {
       session.ws.send(JSON.stringify(message));
@@ -343,7 +323,7 @@ export class WebSocketServer_Hazina {
     this.heartbeatInterval = setInterval(() => {
       this.clients.forEach((session, clientId) => {
         if (!session.isAlive) {
-          console.log(`[WebSocket] Terminating dead connection: ${clientId}`);
+          logger.info(`[WebSocket] Terminating dead connection: ${clientId}`);
           session.ws.terminate();
           return;
         }
@@ -368,7 +348,7 @@ export class WebSocketServer_Hazina {
     });
 
     this.wss.close(() => {
-      console.log('[WebSocket] Server shutdown complete');
+      logger.info('[WebSocket] Server shutdown complete');
     });
   }
 

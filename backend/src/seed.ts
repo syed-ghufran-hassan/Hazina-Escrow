@@ -1,6 +1,7 @@
 import { faker } from '@faker-js/faker';
 import { v4 as uuidv4 } from 'uuid';
 import { Dataset, Transaction, writeStore, readStore, Store } from './common/storage';
+import { logger } from './lib/logger';
 
 const DATA_TYPES = [
   'whale-wallets',
@@ -19,18 +20,27 @@ const generateStellarAddress = () => {
 };
 
 const seed = async () => {
+  if (process.env.NODE_ENV === 'production') {
+    console.error(
+      '[seed] Refusing to run in production (NODE_ENV=production). Aborting to protect live data.',
+    );
+    process.exit(1);
+  }
+
   const clean = process.argv.includes('--clean');
-  console.log(
+  logger.info(
     `Starting seeding... ${clean ? '(Cleaning existing data)' : '(Appending to existing data)'}`,
   );
 
-  const store: Store = clean ? { datasets: [], transactions: [], webhooks: [], payoutFailures: [] } : readStore();
+  const store: Store = clean
+    ? { datasets: [], transactions: [], webhooks: [], payoutFailures: [] }
+    : await readStore();
 
   // Generate Datasets
   const numDatasets = 25;
   const newDatasets: Dataset[] = [];
 
-  console.log(`Generating ${numDatasets} datasets...`);
+  logger.info(`Generating ${numDatasets} datasets...`);
   for (let i = 0; i < numDatasets; i++) {
     const id = `ds-${uuidv4()}`;
     const name =
@@ -78,7 +88,7 @@ const seed = async () => {
 
   // Generate Transactions
   const numTransactions = 150;
-  console.log(`Generating ${numTransactions} transactions...`);
+  logger.info(`Generating ${numTransactions} transactions...`);
   for (let i = 0; i < numTransactions; i++) {
     const dataset = faker.helpers.arrayElement(store.datasets);
     const tx: Transaction = {
@@ -96,9 +106,9 @@ const seed = async () => {
   }
 
   await writeStore(store);
-  console.log(
+  logger.info(
     `Seeding complete! Total in store: ${store.datasets.length} datasets, ${store.transactions.length} transactions.`,
   );
 };
 
-seed().catch(console.error);
+seed().catch(logger.error);
