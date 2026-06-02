@@ -10,11 +10,14 @@ import {
   addTransaction,
   getTransactionByMemo,
   updateTransactionByMemo,
-  updateDataset,
+  getTransactionsWithFailedSellerNotification,
 } from '../common/storage';
-import { v4 as uuidv4 } from 'uuid';
-import { logger } from '../lib/logger';
-import { domainMetrics } from '../common/datadog';
+import { Sentry } from '../common/sentry';
+import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
+import { generateDataSummary } from '../ai/claude.service';
+import { notifySeller } from '../webhooks/webhook.service';
+import { transactionEventEmitter } from '../websocket/transaction-events';
+import { verifyStellarPayment, PaymentError } from './stellar.service';
 
 export interface DeliveryResult {
   success: boolean;
@@ -73,13 +76,34 @@ export async function deliverVerifiedPayment(params: {
     deliveryStatus: 'delivered',
   });
 
+  // Notify seller via webhook. Failures are recorded on the transaction for
+  // the retry worker to pick up — never silently dropped.
   notifySeller(dataset.sellerWallet, 'payment.received', {
     datasetId: dataset.id,
     datasetName: dataset.name,
     txHash,
     amount: dataset.pricePerQuery,
     buyerQuery: buyerQuestion,
-  }).catch(() => {});
+  }).then(() => {
+    void updateTransactionByHash(txHash, {
+      sellerNotifiedAt: new Date().toISOString(),
+      sellerNotificationError: undefined,
+    });
+  }).catch((notifyErr: unknown) => {
+    const errMsg = notifyErr instanceof Error ? notifyErr.message : String(notifyErr);
+    const attempts = 1; // first attempt; incremented on each retry
+    void updateTransactionByHash(txHash, {
+      sellerNotificationError: errMsg,
+      sellerNotificationAttempts: attempts,
+    });
+    console.error(
+      `[Escrow] Seller notification failed for txHash=${txHash} dataset=${dataset.id}: ${errMsg}`,
+    );
+    Sentry.captureException(notifyErr, {
+      tags: { component: 'seller-notification' },
+      extra: { txHash, datasetId: dataset.id, sellerWallet: dataset.sellerWallet },
+    });
+  });
 
   domainMetrics.datasetQueried({
     datasetType: dataset.type,
@@ -177,7 +201,7 @@ export async function processPayment(params: {
   const { txHash, datasetId, buyerQuestion, memo } = params;
   const dataset = await getDataset(datasetId);
   if (!dataset) {
-    throw new Error('Dataset not found');
+    throw new PaymentError('Dataset not found');
   }
 
   // Idempotency check
@@ -228,6 +252,28 @@ export async function processPayment(params: {
       error: verification.reason || 'Stellar payment verification failed',
     });
     throw new PaymentError(verification.reason || 'Stellar payment verification failed');
+  }
+
+  // Bind the payment to this specific dataset via its memo.
+  // Without this check a buyer could redirect a payment made for dataset A (using
+  // its memo) to unlock dataset B if both share the same price — the memo on the
+  // Stellar transaction is the only artefact that ties a payment to a purchase.
+  const txMemo = verification.memo ?? '';
+  if (!txMemo) {
+    throw new PaymentError(
+      'Payment must include the memo provided at query initiation — memo-less payments cannot be bound to a specific dataset',
+    );
+  }
+  const memoOwner = await getTransactionByMemo(txMemo);
+  if (!memoOwner) {
+    throw new PaymentError(
+      'Payment memo does not match any pending transaction — ensure you used the memo from your query initiation',
+    );
+  }
+  if (memoOwner.datasetId !== datasetId) {
+    throw new PaymentError(
+      'Payment memo belongs to a different dataset — use the memo generated for this specific query',
+    );
   }
 
   // Bind the payment to this specific dataset via its memo.
@@ -317,4 +363,84 @@ export async function processPayment(params: {
       error: deliveryErr,
     });
   }
+}
+
+const MAX_SELLER_NOTIFICATION_ATTEMPTS = 10;
+
+export async function retryFailedSellerNotifications(): Promise<void> {
+  const pending = await getTransactionsWithFailedSellerNotification();
+
+  await Promise.all(
+    pending.map(async (tx) => {
+      const attempts = (tx.sellerNotificationAttempts ?? 1) + 1;
+      if (attempts > MAX_SELLER_NOTIFICATION_ATTEMPTS) {
+        // Exhausted retries — surface a durable alert so an operator can investigate
+        console.error(
+          `[Escrow] Seller notification permanently failed after ${MAX_SELLER_NOTIFICATION_ATTEMPTS} attempts ` +
+          `txHash=${tx.txHash} dataset=${tx.datasetId} seller=${tx.datasetId}`,
+        );
+        Sentry.captureMessage(
+          `Seller notification permanently failed: txHash=${tx.txHash}`,
+          { level: 'error', tags: { component: 'seller-notification-dlq' }, extra: { tx } },
+        );
+        // Mark with a sentinel so it leaves the retry queue while staying visible
+        await updateTransactionByHash(tx.txHash, {
+          sellerNotificationError: `PERMANENT_FAILURE after ${MAX_SELLER_NOTIFICATION_ATTEMPTS} attempts: ${tx.sellerNotificationError}`,
+          sellerNotificationAttempts: attempts,
+        });
+        return;
+      }
+
+      const dataset = await getDataset(tx.datasetId);
+      if (!dataset) return;
+
+      try {
+        await notifySeller(dataset.sellerWallet, "payment.received", {
+          datasetId: dataset.id,
+          datasetName: dataset.name,
+          txHash: tx.txHash,
+          amount: tx.amount,
+          buyerQuery: tx.buyerQuery,
+        });
+        await updateTransactionByHash(tx.txHash, {
+          sellerNotifiedAt: new Date().toISOString(),
+          sellerNotificationError: undefined,
+          sellerNotificationAttempts: attempts,
+        });
+        console.log(`[Escrow] Seller notification succeeded on retry attempt ${attempts} txHash=${tx.txHash}`);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        await updateTransactionByHash(tx.txHash, {
+          sellerNotificationError: errMsg,
+          sellerNotificationAttempts: attempts,
+        });
+        console.error(
+          `[Escrow] Seller notification retry ${attempts}/${MAX_SELLER_NOTIFICATION_ATTEMPTS} failed ` +
+          `txHash=${tx.txHash}: ${errMsg}`,
+        );
+      }
+    }),
+  );
+}
+
+let sellerNotificationRetryWorker: NodeJS.Timeout | null = null;
+
+export function startSellerNotificationRetryWorker(intervalMs = 5 * 60_000): void {
+  if (sellerNotificationRetryWorker) return;
+
+  void retryFailedSellerNotifications().catch((err) => {
+    console.error("[Escrow] Initial seller notification retry run failed:", err);
+  });
+
+  sellerNotificationRetryWorker = setInterval(() => {
+    void retryFailedSellerNotifications().catch((err) => {
+      console.error("[Escrow] Seller notification retry worker failed:", err);
+    });
+  }, intervalMs);
+}
+
+export function stopSellerNotificationRetryWorker(): void {
+  if (!sellerNotificationRetryWorker) return;
+  clearInterval(sellerNotificationRetryWorker);
+  sellerNotificationRetryWorker = null;
 }

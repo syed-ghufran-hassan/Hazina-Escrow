@@ -20,6 +20,7 @@ import {
   paymentsRouter,
   startDeliveryRetryWorker,
   stopDeliveryRetryWorker,
+  startSellerNotificationRetryWorker,
 } from './payments/payments.router';
 import { agentRouter } from './agent/agent.router';
 import { validateAgentWallet } from './agent/agent.wallet';
@@ -316,6 +317,7 @@ app.use(
 );
 
 startDeliveryRetryWorker();
+startSellerNotificationRetryWorker();
 
 // Create HTTP server and attach Express app
 const server = http.createServer(app);

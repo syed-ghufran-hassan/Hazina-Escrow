@@ -60,6 +60,9 @@ export interface Transaction {
   sellerPaid?: boolean;
   sellerAmount?: number;
   sellerTxHash?: string;
+  sellerNotifiedAt?: string;
+  sellerNotificationError?: string;
+  sellerNotificationAttempts?: number;
   buyerQuery?: string;
   aiSummary?: string;
   deliveryAttempts?: number;
@@ -472,4 +475,16 @@ export async function getPendingPayoutFailures(nowIso: string): Promise<PayoutFa
 export async function getUnpaidTransactions(): Promise<Transaction[]> {
   const store = await readStore();
   return store.transactions.filter(transaction => transaction.sellerPaid === false);
+}
+
+// Returns completed transactions where the seller notification failed and has not
+// yet exhausted retries. Used by the seller notification retry worker.
+export async function getTransactionsWithFailedSellerNotification(): Promise<Transaction[]> {
+  const store = await readStore();
+  return store.transactions.filter(
+    (t) =>
+      t.status === 'completed' &&
+      t.sellerNotificationError !== undefined &&
+      t.sellerNotifiedAt === undefined,
+  );
 }

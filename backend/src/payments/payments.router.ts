@@ -17,9 +17,28 @@ import {
   updateDataset,
   addTransaction,
   getUnpaidTransactions,
-  txHashUsed,
-  getFailedDeliveryTransactions,
 } from '../common/storage';
+import { validateBody } from '../common/validate';
+import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
+import { generateDataSummary } from '../ai/claude.service';
+import { sanitizeUserText } from '../common/sanitize';
+import { transactionEventEmitter } from '../websocket/transaction-events';
+import { requireAdminKey } from '../common/auth.middleware';
+import {
+  getManualReviewPayouts,
+  recordPayoutFailure,
+  runDuePayoutRetries,
+  scheduleRetrySweep,
+} from './payout-retry.service';
+import { sendUsdcPayment } from '../agent/agent.wallet';
+import {
+  deliverVerifiedPayment,
+  markDeliveryFailure,
+  processPayment,
+  startSellerNotificationRetryWorker,
+  stopSellerNotificationRetryWorker,
+} from './payments.service';
+import { PaymentError, StellarTimeoutError } from './stellar.service';
 
 export const paymentsRouter = Router();
 
@@ -146,6 +165,8 @@ const verifyDemoSchema = z.object({
  *         description: Dataset not found
  */
 
+
+
 // POST /api/query/:id — initiate query, returns 402 Payment Required
 paymentsRouter.post('/query/:id', async (req: Request, res: Response) => {
   const dataset = await getDataset(req.params.id);
@@ -242,7 +263,10 @@ export function stopDeliveryRetryWorker(): void {
 
   clearInterval(deliveryRetryWorker);
   deliveryRetryWorker = null;
+  stopSellerNotificationRetryWorker();
 }
+
+export { startSellerNotificationRetryWorker };
 
 // POST /api/verify/:id — verify payment on Stellar and release the dataset to the buyer
 paymentsRouter.post(
@@ -265,28 +289,63 @@ paymentsRouter.post(
         buyerQuestion,
       });
 
-      const statusCode = result.pendingDelivery ? 202 : 200;
-      return res.status(statusCode).json({
+      // Forward seller's share on-chain; failures enter the DLQ for retry
+      const sellerAmount = parseFloat((dataset.pricePerQuery * 0.95).toFixed(7));
+      try {
+        const payment = await sendUsdcPayment({
+          destinationAddress: dataset.sellerWallet,
+          amount: sellerAmount.toFixed(7),
+          memo: `hazina-${dataset.id.slice(0, 10)}`,
+        });
+        console.log(
+          `[Escrow] Paid seller ${sellerAmount} USDC → ${dataset.sellerWallet} (${payment.txHash})`,
+        );
+      } catch (payErr) {
+        console.warn(
+          '[Escrow] Seller payment failed (data still delivered):',
+          payErr instanceof Error ? payErr.message : payErr,
+        );
+        await recordPayoutFailure({
+          datasetId: dataset.id,
+          sellerWallet: dataset.sellerWallet,
+          buyerTxHash: txHash,
+          intendedAmount: sellerAmount,
+          error: payErr instanceof Error ? payErr.message : String(payErr),
+        });
+      }
+
+      if (result.pendingDelivery) {
+        return res.status(202).json(result);
+      }
+
+      return res.json({
         ...result,
         warning: result.pendingDelivery ? result.warning : null,
       });
     } catch (err) {
       if (err instanceof StellarTimeoutError) {
-        // Network-level failure — not the client's fault
         return res.status(503).json({ error: err.message });
       }
       if (err instanceof PaymentError) {
-        // Intentional user-facing error with a safe message we authored
         return res.status(400).json({ error: err.message });
       }
-      // Unexpected error — log full details server-side, send nothing internal to client
-      logger.error(
-        `[Verify] Unexpected error processing payment: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      console.error('[Verify] Unexpected error processing payment:', err);
       return res.status(500).json({ error: 'Payment verification failed — please try again' });
     }
   },
 );
+
+// GET /api/admin/payouts/stuck — list payouts requiring manual review
+paymentsRouter.get('/admin/payouts/stuck', requireAdminKey, (_req: Request, res: Response) => {
+  return res.json({ payouts: getManualReviewPayouts() });
+});
+
+// POST /api/admin/payouts/retry — trigger retry sweep now
+paymentsRouter.post('/admin/payouts/retry', requireAdminKey, async (_req: Request, res: Response) => {
+  const processed = await runDuePayoutRetries();
+  scheduleRetrySweep(1_000);
+  return res.json({ success: true, processed });
+});
 
 // POST /api/verify/:id/demo — demo mode (skip Stellar check) for hackathon
 paymentsRouter.post(
