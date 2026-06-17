@@ -21,7 +21,7 @@ import {
   Activity,
   ChevronRight,
 } from 'lucide-react';
-import { api, DatasetMeta, Transaction } from '../lib/api';
+import { api, DatasetMeta, SellerAnalytics, Transaction } from '../lib/api';
 import { useCountUp } from '../hooks/useCountUp';
 import { formatUSDC, formatTimeAgo, getTypeMeta, truncateAddress } from '../lib/utils';
 import { Link } from 'react-router-dom';
@@ -149,6 +149,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [walletFilter, setWalletFilter] = useState('');
+  const [analytics, setAnalytics] = useState<SellerAnalytics | null>(null);
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
 
@@ -166,9 +167,48 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, [t]);
 
+  const selectedWallet = walletFilter || datasets[0]?.sellerWallet || '';
+  useEffect(() => {
+    if (!selectedWallet) return;
+    api
+      .getSellerAnalytics(selectedWallet)
+      .then(setAnalytics)
+      .catch(() => setAnalytics(null));
+  }, [selectedWallet]);
+
+  const exportCsv = () => {
+    const rows = [
+      ['id', 'datasetId', 'txHash', 'amount', 'timestamp'],
+      ...transactions.map(tx => [
+        tx.id,
+        tx.datasetId,
+        tx.txHash,
+        tx.amount.toString(),
+        tx.timestamp,
+      ]),
+    ];
+    const csv = rows
+      .map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'hazina-transactions.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const totalEarned = datasets.reduce((s, d) => s + d.totalEarned, 0);
   const totalQueries = datasets.reduce((s, d) => s + d.queriesServed, 0);
   const chartData = buildChartData(transactions, locale);
+  const revenueData =
+    analytics?.revenueSeries.map(point => ({ day: point.date.slice(5), earned: point.usdc })) ??
+    chartData;
+  const queryData =
+    analytics?.queryVolumeSeries.map(point => ({
+      day: point.date.slice(5),
+      queries: point.count,
+    })) ?? chartData;
   const recentTx = [...transactions]
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 8);
@@ -303,6 +343,12 @@ export default function DashboardPage() {
           </div>
         )}
 
+        <div className="flex justify-end mb-6">
+          <button type="button" onClick={exportCsv} className="btn-gold text-sm px-4 py-2">
+            Export CSV
+          </button>
+        </div>
+
         {/* Stats row */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           <StatCard
@@ -355,7 +401,7 @@ export default function DashboardPage() {
             <div className="h-[220px] w-full overflow-x-hidden">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
-                  data={chartData}
+                  data={revenueData}
                   margin={{ top: 5, right: 5, left: isMobile ? -16 : 0, bottom: 0 }}
                 >
                   <defs>
@@ -417,7 +463,7 @@ export default function DashboardPage() {
             <div className="h-[220px] w-full overflow-x-hidden">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={chartData}
+                  data={queryData}
                   margin={{ top: 5, right: 5, left: isMobile ? -16 : 0, bottom: 0 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
@@ -449,10 +495,10 @@ export default function DashboardPage() {
                     name={t('dashboard.charts.queriesSeries')}
                     radius={[4, 4, 0, 0]}
                   >
-                    {chartData.map((_, i) => (
+                    {queryData.map((_, i) => (
                       <Cell
                         key={i}
-                        fill={i === chartData.length - 1 ? '#C9A84C' : 'rgba(201,168,76,0.35)'}
+                        fill={i === queryData.length - 1 ? '#C9A84C' : 'rgba(201,168,76,0.35)'}
                       />
                     ))}
                   </Bar>
@@ -594,6 +640,47 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+
+        {analytics && (
+          <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="glass-card p-6">
+              <h3 className="font-display font-semibold text-foreground mb-4">
+                Dataset leaderboard
+              </h3>
+              <div className="space-y-2">
+                {analytics.datasetBreakdown.slice(0, 5).map(item => (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between rounded-xl bg-surface-2/40 p-3"
+                  >
+                    <span className="text-sm text-foreground truncate">{item.name}</span>
+                    <span className="text-xs text-gold">
+                      ${formatUSDC(item.earned, locale)} · {item.queries} queries
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="glass-card p-6">
+              <h3 className="font-display font-semibold text-foreground mb-4">Top buyer wallets</h3>
+              <div className="space-y-2">
+                {analytics.topBuyers.map(buyer => (
+                  <div
+                    key={buyer.wallet}
+                    className="flex items-center justify-between rounded-xl bg-surface-2/40 p-3"
+                  >
+                    <span className="font-mono text-xs text-gold">
+                      {truncateAddress(buyer.wallet)}
+                    </span>
+                    <span className="text-xs text-foreground-muted">
+                      {buyer.count.toLocaleString(locale)} queries
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Bottom banner */}
         <div className="mt-6 glass-card-gold p-6 flex flex-col md:flex-row items-center justify-between gap-4">

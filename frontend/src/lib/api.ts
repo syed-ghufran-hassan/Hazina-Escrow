@@ -137,6 +137,13 @@ export interface Transaction {
   timestamp: string;
 }
 
+export interface SellerAnalytics {
+  revenueSeries: { date: string; usdc: number }[];
+  queryVolumeSeries: { date: string; count: number }[];
+  datasetBreakdown: { id: string; name: string; earned: number; queries: number }[];
+  topBuyers: { wallet: string; count: number }[];
+}
+
 export interface Stats {
   totalDatasets: number;
   totalQueries: number;
@@ -163,7 +170,6 @@ export interface QueryResult {
     platformFee: number;
   };
 }
-
 
 interface RequestOptions extends RequestInit {
   /** Per-call override of the abort timeout, in milliseconds. */
@@ -336,6 +342,16 @@ export const api = {
     request<{ success: boolean; dataset: DatasetMeta }>(`${BASE}/datasets/${id}`).then(
       r => r.dataset,
     ),
+
+  getSellerAnalytics: (wallet: string) =>
+    request<{ success: boolean } & SellerAnalytics>(
+      `${BASE}/analytics/seller/${encodeURIComponent(wallet)}`,
+    ).then(r => ({
+      revenueSeries: r.revenueSeries,
+      queryVolumeSeries: r.queryVolumeSeries,
+      datasetBreakdown: r.datasetBreakdown,
+      topBuyers: r.topBuyers,
+    })),
 
   getTransactions: (datasetId?: string) => {
     const url = datasetId

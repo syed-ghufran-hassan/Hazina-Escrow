@@ -654,6 +654,22 @@
                     },
                     {
                       "key": {
+                        "symbol": "dispute_deadline"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "disputed"
+                      },
+                      "val": {
+                        "bool": false
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "escrow_id"
                       },
                       "val": {
@@ -771,6 +787,22 @@
                       },
                       "val": {
                         "string": "ds-eurc"
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "dispute_deadline"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "disputed"
+                      },
+                      "val": {
+                        "bool": false
                       }
                     },
                     {

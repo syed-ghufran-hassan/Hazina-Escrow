@@ -18,6 +18,7 @@ import { datasetsRouter } from './datasets/datasets.router';
 import { paymentsRouter } from './payments/payments.router';
 import { agentRouter } from './agent/agent.router';
 import { webhooksRouter } from './webhooks/webhook.router';
+import { analyticsRouter } from './analytics.router';
 import { readStore } from './common/storage';
 import { BackupScheduler } from './common/backup.scheduler';
 import { backupRouter, setBackupScheduler } from './common/backup.router';
@@ -204,6 +205,7 @@ app.use('/api/datasets', datasetsRouter);
 app.use('/api', paymentsRouter);
 app.use('/api/agent', agentRouter);
 app.use('/api/webhooks', webhooksRouter);
+app.use('/api/analytics', analyticsRouter);
 app.use('/api', backupRouter);
 
 // Create HTTP server and attach Express app
