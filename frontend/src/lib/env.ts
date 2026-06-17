@@ -1,15 +1,25 @@
 /**
- * Environment variable validation.
+ * Environment variable validation and central access.
  *
- * Call validateEnv() once at app startup (main.tsx) so missing or
+ * Call initEnv() once at the very top of app startup (main.tsx) so missing or
  * invalid env vars fail loudly instead of causing cryptic runtime errors.
  */
 
-interface EnvConfig {
+export interface EnvConfig {
+  /** Base URL of the backend API (e.g. http://localhost:3001) */
   apiUrl: string;
+  enableDemoMode: boolean;
 }
 
-const REQUIRED_ENV_VARS = ["VITE_API_URL"] as const;
+const REQUIRED_ENV_VARS = ['VITE_API_URL', 'VITE_API_KEY'] as const;
+
+function readEnableDemoMode() {
+  return (
+    String(import.meta.env.VITE_ENABLE_DEMO_MODE ?? '')
+      .trim()
+      .toLowerCase() === 'true'
+  );
+}
 
 /**
  * Validate required environment variables and return a typed config object.
@@ -18,23 +28,29 @@ const REQUIRED_ENV_VARS = ["VITE_API_URL"] as const;
 export function validateEnv(): EnvConfig {
   const missing: string[] = [];
 
+  // Try import.meta.env first (Vite), fall back to process.env (Node/test environment)
+  const envVars = (import.meta.env as Record<string, string | undefined>) || process.env;
+
   for (const key of REQUIRED_ENV_VARS) {
-    const value = import.meta.env[key];
-    if (!value || String(value).trim() === "") {
+    const value = envVars[key];
+    if (!value || String(value).trim() === '') {
       missing.push(key);
     }
   }
 
   if (missing.length > 0) {
-    const list = missing.map((k) => `  • ${k}`).join("\n");
+    const list = missing.map(k => `  • ${k}`).join('\n');
     throw new Error(
       `[Hazina] Missing required environment variable(s):\n${list}\n\n` +
-        "Copy .env.example to .env and fill in the missing values before starting the app.",
+        'Copy .env.example to .env and fill in the missing values before starting the app.',
     );
   }
 
   return {
-    apiUrl: String(import.meta.env.VITE_API_URL).trim().replace(/\/+$/, ""),
+    apiUrl: String(import.meta.env.VITE_API_URL)
+      .trim()
+      .replace(/\/+$/, ''),
+    enableDemoMode: readEnableDemoMode(),
   };
 }
 
@@ -47,8 +63,8 @@ let _env: EnvConfig | null = null;
 export function getEnv(): EnvConfig {
   if (!_env) {
     throw new Error(
-      "[Hazina] getEnv() called before validateEnv(). " +
-        "Make sure validateEnv() is called in main.tsx before rendering the app.",
+      '[Hazina] getEnv() called before validateEnv(). ' +
+        'Make sure validateEnv() is called in main.tsx before rendering the app.',
     );
   }
   return _env;
@@ -57,4 +73,8 @@ export function getEnv(): EnvConfig {
 export function initEnv(): EnvConfig {
   _env = validateEnv();
   return _env;
+}
+
+export function isDemoModeEnabled() {
+  return readEnableDemoMode();
 }

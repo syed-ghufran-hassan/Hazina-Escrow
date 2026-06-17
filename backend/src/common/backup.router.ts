@@ -14,7 +14,7 @@ const restoreBackupSchema = z.object({
       /^[A-Za-z0-9._-]+$/,
       'filename must contain only letters, numbers, dots, dashes, and underscores',
     )
-    .refine((value) => !value.includes('..'), 'filename must not contain path traversal sequences'),
+    .refine(value => !value.includes('..'), 'filename must not contain path traversal sequences'),
 });
 
 let backupScheduler: BackupScheduler | null = null;
@@ -35,13 +35,13 @@ export const backupRouter = Router();
  *       200:
  *         description: List of backups
  */
-backupRouter.get('/backups', requireAdminKey, (_req: Request, res: Response) => {
+backupRouter.get('/backups', requireAdminKey, async (_req: Request, res: Response) => {
   if (!backupScheduler) {
     return res.status(503).json({ error: 'Backup service not initialized' });
   }
 
   try {
-    const backups = backupScheduler.getBackupService().listBackups();
+    const backups = await backupScheduler.getBackupService().listBackups();
     res.json({ backups });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -59,13 +59,13 @@ backupRouter.get('/backups', requireAdminKey, (_req: Request, res: Response) => 
  *       200:
  *         description: Backup statistics
  */
-backupRouter.get('/backups/stats', requireAdminKey, (_req: Request, res: Response) => {
+backupRouter.get('/backups/stats', requireAdminKey, async (_req: Request, res: Response) => {
   if (!backupScheduler) {
     return res.status(503).json({ error: 'Backup service not initialized' });
   }
 
   try {
-    const stats = backupScheduler.getBackupService().getBackupStats();
+    const stats = await backupScheduler.getBackupService().getBackupStats();
     res.json(stats);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -90,10 +90,10 @@ backupRouter.post('/backups/create', requireAdminKey, async (_req: Request, res:
 
   try {
     const metadata = await backupScheduler.getBackupService().createBackup();
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       message: 'Backup created successfully',
-      metadata 
+      metadata,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -120,21 +120,26 @@ backupRouter.post('/backups/create', requireAdminKey, async (_req: Request, res:
  *       200:
  *         description: Backup restored successfully
  */
-backupRouter.post('/backups/restore', requireAdminKey, validateBody(restoreBackupSchema), async (req: Request, res: Response) => {
-  if (!backupScheduler) {
-    return res.status(503).json({ error: 'Backup service not initialized' });
-  }
+backupRouter.post(
+  '/backups/restore',
+  requireAdminKey,
+  validateBody(restoreBackupSchema),
+  async (req: Request, res: Response) => {
+    if (!backupScheduler) {
+      return res.status(503).json({ error: 'Backup service not initialized' });
+    }
 
-  const { filename } = req.body as z.infer<typeof restoreBackupSchema>;
+    const { filename } = req.body as z.infer<typeof restoreBackupSchema>;
 
-  try {
-    await backupScheduler.getBackupService().restoreBackup(filename);
-    res.json({ 
-      success: true, 
-      message: `Backup restored successfully from ${filename}` 
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    res.status(500).json({ error: message });
-  }
-});
+    try {
+      await backupScheduler.getBackupService().restoreBackup(filename);
+      res.json({
+        success: true,
+        message: `Backup restored successfully from ${filename}`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ error: message });
+    }
+  },
+);

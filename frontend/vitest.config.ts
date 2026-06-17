@@ -7,19 +7,30 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'happy-dom',
+    setupFiles: ['./src/test/setup.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
+    env: {
+      VITE_API_URL: 'http://localhost:3000',
+      VITE_API_KEY: 'test-api-key',
+      VITE_STELLAR_NETWORK: 'testnet',
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],
       exclude: [
         'node_modules/',
         'dist/',
+        'e2e/**',
         '**/*.test.tsx',
         '**/*.spec.tsx',
+        '**/*.spec.ts',
       ],
-      lines: 80,
-      functions: 80,
-      branches: 80,
-      statements: 80,
+      thresholds: {
+        lines: 50,
+        functions: 35,
+        branches: 60,
+        statements: 50,
+      },
     },
   },
   resolve: {

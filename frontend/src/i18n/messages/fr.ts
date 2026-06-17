@@ -95,8 +95,13 @@ export const fr: EnglishMessages = {
       dayAgo: 'il y a {count} j',
     },
     errors: {
-      imageNotSupported: "Image non supportée",
+      imageNotSupported: 'Image non supportée',
     },
+  },
+  websocket: {
+    connected: 'En direct',
+    disconnected: 'Hors ligne',
+    error: 'Erreur de connexion',
   },
   nav: {
     marketplace: 'Marketplace',
@@ -104,7 +109,11 @@ export const fr: EnglishMessages = {
     sell: 'Vendre des données',
     dashboard: 'Tableau de bord',
     mobileMenu: 'Menu',
+    openMobileMenu: 'Ouvrir le menu',
+    closeMobileMenu: 'Fermer le menu',
     brand: 'Hazina',
+    connectWallet: 'Connecter le wallet',
+    disconnect: 'Déconnecter',
   },
   dataTypes: {
     all: 'Tous les types',
@@ -234,6 +243,7 @@ export const fr: EnglishMessages = {
       listingLiveBody: '{name} est maintenant disponible sur la marketplace.',
       listingLiveRevenue:
         "Les acheteurs peuvent l'interroger pour {price} USDC chacun. 95 % vont directement vers votre wallet Stellar.",
+      draftRestored: 'Brouillon restauré depuis votre dernière session',
     },
     eyebrow: 'Gagnez passivement',
     title: 'Lister vos données',
@@ -251,6 +261,7 @@ export const fr: EnglishMessages = {
         'Décrivez le contenu de vos données, leur mode de collecte et pourquoi les acheteurs les voudraient...',
       dataType: 'Type de données',
       pricePerQuery: 'Prix / requête (USDC)',
+      pricePerQueryError: 'Le prix doit être supérieur à 0',
       quickPricePresets: 'Tarifs rapides :',
       sellerWallet: 'Votre adresse Stellar',
       sellerWalletPlaceholder: 'G... (clé publique Stellar de 56 caractères)',
@@ -303,6 +314,7 @@ export const fr: EnglishMessages = {
     title: 'Tableau de bord',
     subtitle: 'Vos revenus en temps réel et la performance de vos datasets.',
     loadError: 'Impossible de charger le tableau de bord',
+    refreshing: 'Actualisation',
     allSellers: 'Tous les vendeurs',
     stats: {
       totalEarned: 'USDC totaux gagnés',
@@ -352,6 +364,18 @@ export const fr: EnglishMessages = {
     demoModeNote: 'Mode démo — paiements simulés sur Stellar testnet',
     loading: 'Recherche en cours...',
     errorTitle: "Erreur de l'agent",
+    rateLimitError: 'Trop de requêtes — veuillez patienter avant de réessayer.',
+    minLengthError: 'La requête doit comporter au moins 5 caractères.',
+    payAndResearch: 'Payer {amount} USDC et rechercher',
+    paidModeNote: 'Portefeuille connecté — payez {amount} USDC pour une recherche réelle on-chain',
+    runDemoInstead: 'Lancer la démo gratuite',
+    payInstructions:
+      'Payez {amount} USDC avec votre portefeuille, puis collez le hash de transaction pour lancer la recherche.',
+    payToAddress: 'Adresse de séquestre de l’agent',
+    txReceived: 'Hash de transaction reçu — confirmez pour lancer la recherche.',
+    txPending:
+      'Terminez le paiement dans votre portefeuille, puis collez le hash de transaction ci-dessous.',
+    confirmAndResearch: 'Confirmer et rechercher',
     result: {
       topOpportunity: 'Meilleure opportunité',
       reasoning: 'Raisonnement',

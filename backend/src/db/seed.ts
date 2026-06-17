@@ -1,9 +1,16 @@
-/* eslint-disable prefer-node-protocol,sonarjs/cognitive-complexity */
-import { readFileSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import { resolve } from 'node:path';
-import db from './client';
-import { datasets, transactions } from './schema';
 import { eq } from 'drizzle-orm';
+import db from './client';
+import { datasets, transactions, datasetsSqlite, transactionsSqlite } from './schema';
+import { logger } from '../lib/logger';
+
+const isPostgres =
+  (process.env.DATABASE_URL ?? '').startsWith('postgres://') ||
+  (process.env.DATABASE_URL ?? '').startsWith('postgresql://');
+
+const datasetsTable = isPostgres ? datasets : datasetsSqlite;
+const transactionsTable = isPostgres ? transactions : transactionsSqlite;
 
 interface DatasetFromJSON {
   id: string;
@@ -28,7 +35,7 @@ interface TransactionFromJSON {
   timestamp: string;
 }
 
-async function seedDatasets(jsonData: any): Promise<void> {
+async function seedDatasets(jsonData: Record<string, unknown>): Promise<void> {
   if (!jsonData.datasets || !Array.isArray(jsonData.datasets)) {
     return;
   }
@@ -36,16 +43,16 @@ async function seedDatasets(jsonData: any): Promise<void> {
   for (const dataset of jsonData.datasets as DatasetFromJSON[]) {
     const existing = await db
       .select()
-      .from(datasets)
-      .where(eq(datasets.id, dataset.id))
+      .from(datasetsTable as typeof datasets)
+      .where(eq((datasetsTable as typeof datasets).id, dataset.id))
       .limit(1);
 
     if (existing.length > 0) {
-      console.log(`⊘ Dataset already exists: ${dataset.id}`);
+      logger.info(`⊘ Dataset already exists: ${dataset.id}`);
       continue;
     }
 
-    await db.insert(datasets).values({
+    await db.insert(datasetsTable as typeof datasets).values({
       id: dataset.id,
       name: dataset.name,
       description: dataset.description,
@@ -57,11 +64,11 @@ async function seedDatasets(jsonData: any): Promise<void> {
       totalEarned: dataset.totalEarned.toString(),
       createdAt: dataset.createdAt,
     });
-    console.log(`✓ Inserted dataset: ${dataset.id}`);
+    logger.info(`✓ Inserted dataset: ${dataset.id}`);
   }
 }
 
-async function seedTransactions(jsonData: any): Promise<void> {
+async function seedTransactions(jsonData: Record<string, unknown>): Promise<void> {
   if (!jsonData.transactions || !Array.isArray(jsonData.transactions)) {
     return;
   }
@@ -69,16 +76,16 @@ async function seedTransactions(jsonData: any): Promise<void> {
   for (const tx of jsonData.transactions as TransactionFromJSON[]) {
     const existing = await db
       .select()
-      .from(transactions)
-      .where(eq(transactions.txHash, tx.txHash))
+      .from(transactionsTable as typeof transactions)
+      .where(eq((transactionsTable as typeof transactions).txHash, tx.txHash))
       .limit(1);
 
     if (existing.length > 0) {
-      console.log(`⊘ Transaction already exists: ${tx.txHash}`);
+      logger.info(`⊘ Transaction already exists: ${tx.txHash}`);
       continue;
     }
 
-    await db.insert(transactions).values({
+    await db.insert(transactionsTable as typeof transactions).values({
       id: tx.id,
       datasetId: tx.datasetId,
       txHash: tx.txHash,
@@ -87,25 +94,25 @@ async function seedTransactions(jsonData: any): Promise<void> {
       aiSummary: tx.aiSummary || null,
       timestamp: tx.timestamp,
     });
-    console.log(`✓ Inserted transaction: ${tx.txHash}`);
+    logger.info(`✓ Inserted transaction: ${tx.txHash}`);
   }
 }
 
 async function seed(): Promise<void> {
   try {
     const dataPath = resolve(__dirname, '../../data/datasets.json');
-    const fileContent = readFileSync(dataPath, 'utf-8');
+    const fileContent = await fs.readFile(dataPath, 'utf-8');
     const jsonData = JSON.parse(fileContent);
 
-    console.log('Seeding database...');
+    logger.info('Seeding database...');
 
     await seedDatasets(jsonData);
     await seedTransactions(jsonData);
 
-    console.log('Seeding complete!');
+    logger.info('Seeding complete!');
     process.exit(0);
   } catch (error) {
-    console.error('Seed error:', error);
+    logger.error(`Seed error: ${error instanceof Error ? error.message : String(error)}`);
     process.exit(1);
   }
 }

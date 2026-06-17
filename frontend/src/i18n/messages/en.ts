@@ -95,8 +95,13 @@ export const en = {
       dayAgo: '{count}d ago',
     },
     errors: {
-      imageNotSupported: "Image not supported",
+      imageNotSupported: 'Image not supported',
     },
+  },
+  websocket: {
+    connected: 'Live',
+    disconnected: 'Offline',
+    error: 'Connection Error',
   },
   nav: {
     marketplace: 'Marketplace',
@@ -104,6 +109,8 @@ export const en = {
     sell: 'Sell Data',
     dashboard: 'Dashboard',
     mobileMenu: 'Menu',
+    openMobileMenu: 'Open menu',
+    closeMobileMenu: 'Close menu',
     brand: 'Hazina',
     connectWallet: 'Connect Wallet',
     disconnect: 'Disconnect',
@@ -235,6 +242,7 @@ export const en = {
       listingLiveBody: '{name} is now on the marketplace.',
       listingLiveRevenue:
         'Buyers can query it for ${price} USDC each. 95% goes directly to your Stellar wallet.',
+      draftRestored: 'Draft restored from your last session',
     },
     eyebrow: 'Earn Passively',
     title: 'List Your Data',
@@ -252,6 +260,7 @@ export const en = {
         'Describe what your data contains, how it was collected, and why buyers would want it...',
       dataType: 'Data Type',
       pricePerQuery: 'Price / Query (USDC)',
+      pricePerQueryError: 'Price must be greater than 0',
       quickPricePresets: 'Quick price presets:',
       sellerWallet: 'Your Stellar Wallet Address',
       sellerWalletPlaceholder: 'G... (56-character Stellar public key)',
@@ -303,6 +312,7 @@ export const en = {
     title: 'Dashboard',
     subtitle: 'Your real-time earnings and dataset performance.',
     loadError: 'Could not load dashboard',
+    refreshing: 'Refreshing',
     allSellers: 'All Sellers',
     stats: {
       totalEarned: 'Total USDC Earned',
@@ -352,6 +362,17 @@ export const en = {
     demoModeNote: 'Demo mode — payments simulated on Stellar testnet',
     loading: 'Researching...',
     errorTitle: 'Agent error',
+    rateLimitError: 'Too many requests — please wait a moment before retrying.',
+    minLengthError: 'Query must be at least 5 characters.',
+    payAndResearch: 'Pay {amount} USDC & Research',
+    paidModeNote: 'Wallet connected — pay {amount} USDC for real on-chain research',
+    runDemoInstead: 'Run free demo',
+    payInstructions:
+      'Pay {amount} USDC with your wallet, then paste the transaction hash to run the research.',
+    payToAddress: 'Agent escrow address',
+    txReceived: 'Transaction hash received — confirm to run the research.',
+    txPending: 'Complete the payment in your wallet, then paste the transaction hash below.',
+    confirmAndResearch: 'Confirm & Research',
     result: {
       topOpportunity: 'Top Opportunity',
       reasoning: 'Reasoning',

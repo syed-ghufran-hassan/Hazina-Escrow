@@ -2,13 +2,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockCreate = vi.fn();
 
-vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: {
-      create: mockCreate,
-    },
-  })),
-}));
+vi.mock('@anthropic-ai/sdk', () => {
+  class APITimeoutError extends Error {
+    constructor() {
+      super('Request timed out');
+      this.name = 'APITimeoutError';
+    }
+  }
+
+  const MockAnthropic = vi.fn().mockImplementation(() => ({
+    messages: { create: mockCreate },
+  })) as unknown as { new (): object; APITimeoutError: typeof APITimeoutError };
+  MockAnthropic.APITimeoutError = APITimeoutError;
+
+  return { default: MockAnthropic };
+});
 
 import {
   generateDataSummary,
@@ -87,5 +95,47 @@ describe('generateDataSummary', () => {
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ model: 'claude-custom-summary-model' }),
     );
+  });
+});
+
+// ── Timeout tests ──────────────────────────────────────────────────────────
+describe('generateDataSummary timeout handling', () => {
+  const originalTimeout = process.env.ANTHROPIC_TIMEOUT_MS;
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+    delete process.env.ANTHROPIC_TIMEOUT_MS;
+  });
+
+  afterEach(() => {
+    if (originalTimeout === undefined) delete process.env.ANTHROPIC_TIMEOUT_MS;
+    else process.env.ANTHROPIC_TIMEOUT_MS = originalTimeout;
+  });
+
+  it('throws AnthropicTimeoutError when SDK raises APITimeoutError', async () => {
+    // Simulate the Anthropic SDK throwing a timeout error
+    const timeoutErr = new Error('Request timed out');
+    timeoutErr.name = 'APITimeoutError';
+    mockCreate.mockRejectedValue(timeoutErr);
+
+    const { AnthropicTimeoutError } = await import('./claude.service');
+
+    await expect(generateDataSummary({ rows: [1, 2, 3] })).rejects.toBeInstanceOf(
+      AnthropicTimeoutError,
+    );
+  });
+
+  it('AnthropicTimeoutError message is user-friendly', async () => {
+    // Simulate the Anthropic SDK throwing a timeout error
+    const timeoutErr = new Error('Request timed out');
+    timeoutErr.name = 'APITimeoutError';
+    mockCreate.mockRejectedValue(timeoutErr);
+
+    const { AnthropicTimeoutError } = await import('./claude.service');
+
+    const err = await generateDataSummary({ rows: [] }).catch(e => e);
+    expect(err).toBeInstanceOf(AnthropicTimeoutError);
+    expect(err.message).not.toContain('AbortError');
+    expect(err.message).toMatch(/AI assistant did not respond/i);
   });
 });

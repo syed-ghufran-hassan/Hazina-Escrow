@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 import { buildAlbedoPaymentUrl, buildFreighterPaymentUri } from './stellarWallets';
+import { initEnv } from './env';
 
 const payment = {
   paymentAddress: `G${'B'.repeat(55)}`,
@@ -8,6 +9,10 @@ const payment = {
 };
 
 describe('stellarWallets', () => {
+  beforeEach(() => {
+    initEnv();
+  });
+
   it('builds a Freighter-compatible SEP-7 payment URI', () => {
     const uri = buildFreighterPaymentUri(payment);
 

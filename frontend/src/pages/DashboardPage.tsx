@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AreaChart,
   Area,
@@ -20,18 +20,26 @@ import {
   DollarSign,
   Activity,
   ChevronRight,
+  Loader2,
 } from 'lucide-react';
+
 import { api, DatasetMeta, SellerAnalytics, Transaction } from '../lib/api';
+
+import { api, DatasetMeta, PaginatedDatasets, Transaction } from '../lib/api';
+
 import { useCountUp } from '../hooks/useCountUp';
-import { formatUSDC, formatTimeAgo, getTypeMeta, truncateAddress } from '../lib/utils';
+import { formatUSDC, getTypeMeta, truncateAddress } from '../lib/utils';
 import { Link } from 'react-router-dom';
 import {
+  Skeleton,
   StatCardSkeleton,
   TransactionRowSkeleton,
   ChartSkeleton,
 } from '../components/ui/SkeletonLoader';
 import clsx from 'clsx';
 import { useI18n } from '../i18n';
+import { useTransactionWebSocket } from '../hooks/useTransactionWebSocket';
+import { WebSocketStatus } from '../components/ui/WebSocketStatus';
 
 /* ── Animated stat card ── */
 function StatCard({
@@ -52,10 +60,11 @@ function StatCard({
   prefix?: string;
   decimals?: number;
   color?: string;
-  trend?: number;
+  trend?: number | null;
   locale?: string;
 }) {
   const animated = useCountUp(value, 1800, decimals);
+  const trendValid = trend !== undefined && trend !== null && isFinite(trend) && !isNaN(trend);
   return (
     <div className="glass-card-gold p-5">
       <div className="flex items-start justify-between mb-3">
@@ -66,11 +75,15 @@ function StatCard({
           <span
             className={clsx(
               'text-xs font-body font-medium flex items-center gap-0.5 px-2 py-1 rounded-full',
-              trend >= 0 ? 'text-emerald-400 bg-emerald-400/10' : 'text-red-400 bg-red-400/10',
+              !trendValid
+                ? 'text-foreground-muted bg-surface-2'
+                : trend >= 0
+                  ? 'text-emerald-400 bg-emerald-400/10'
+                  : 'text-red-400 bg-red-400/10',
             )}
           >
-            <ArrowUpRight className={clsx('w-3 h-3', trend < 0 && 'rotate-180')} />
-            {Math.abs(trend)}%
+            {trendValid && <ArrowUpRight className={clsx('w-3 h-3', trend < 0 && 'rotate-180')} />}
+            {trendValid ? `${Math.abs(trend).toFixed(1)}%` : '—'}
           </span>
         )}
       </div>
@@ -117,6 +130,12 @@ function ChartTooltip({
   );
 }
 
+/* ── Safe percentage change (returns null when previous is 0 to avoid NaN/Infinity) ── */
+function safePctChange(current: number, previous: number): number | null {
+  if (previous === 0) return null;
+  return ((current - previous) / previous) * 100;
+}
+
 /* ── Generate 7-day chart data from transactions ── */
 function buildChartData(transactions: Transaction[], locale: string) {
   const days: Record<string, { queries: number; earned: number }> = {};
@@ -147,26 +166,71 @@ export default function DashboardPage() {
   const [datasets, setDatasets] = useState<DatasetMeta[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [isRefetching, setIsRefetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [walletFilter, setWalletFilter] = useState('');
+
   const [analytics, setAnalytics] = useState<SellerAnalytics | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'analytics'>('overview');
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
 
+  const [isMobile, setIsMobile] = useState(false);
+  const hasLoadedOnceRef = useRef(false);
+  const websocketOptions = useMemo(() => ({ enabled: hasLoadedOnce }), [hasLoadedOnce]);
+  const websocketCallbacks = useMemo(() => ({}), []);
+  const { connected: wsConnected, error: wsError } = useTransactionWebSocket(
+    websocketOptions,
+    websocketCallbacks,
+  );
+
+
   useEffect(() => {
-    setLoading(true);
-    setFetchError(null);
-    Promise.all([api.getDatasets(), api.getTransactions()])
-      .then(([ds, txs]) => {
+    let cancelled = false;
+
+    const loadDashboard = async () => {
+      if (hasLoadedOnceRef.current) {
+        setIsRefetching(true);
+      } else {
+        setLoading(true);
+      }
+      setFetchError(null);
+
+      try {
+        const [ds, txs] = (await Promise.all([api.getDatasets(), api.getTransactions()])) as [
+          PaginatedDatasets,
+          Transaction[],
+        ];
+        if (cancelled) {
+          return;
+        }
+
         setDatasets(ds.data);
         setTransactions(txs);
-      })
-      .catch(err => {
+        setHasLoadedOnce(true);
+        hasLoadedOnceRef.current = true;
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+
         setFetchError(err instanceof Error ? err.message : t('dashboard.loadError'));
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          setIsRefetching(false);
+        }
+      }
+    };
+
+    void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
   }, [t]);
+
 
   const selectedWallet = walletFilter || datasets[0]?.sellerWallet || '';
   useEffect(() => {
@@ -199,9 +263,23 @@ export default function DashboardPage() {
     URL.revokeObjectURL(url);
   };
 
+  useEffect(() => {
+    const mobileQuery = window.matchMedia('(max-width: 640px)');
+    const handleMobileChange = () => setIsMobile(mobileQuery.matches);
+
+    handleMobileChange();
+    mobileQuery.addEventListener('change', handleMobileChange);
+
+    return () => {
+      mobileQuery.removeEventListener('change', handleMobileChange);
+    };
+  }, []);
+
+
   const totalEarned = datasets.reduce((s, d) => s + d.totalEarned, 0);
   const totalQueries = datasets.reduce((s, d) => s + d.queriesServed, 0);
   const chartData = buildChartData(transactions, locale);
+
   const revenueData =
     analytics?.revenueSeries.map(point => ({ day: point.date.slice(5), earned: point.usdc })) ??
     chartData;
@@ -210,6 +288,17 @@ export default function DashboardPage() {
       day: point.date.slice(5),
       queries: point.count,
     })) ?? chartData;
+
+
+  // Compare last 3 days vs preceding 4 days for trend indicators
+  const recentEarned = chartData.slice(-3).reduce((s, d) => s + d.earned, 0);
+  const prevEarned = chartData.slice(0, 4).reduce((s, d) => s + d.earned, 0);
+  const earnedTrend = safePctChange(recentEarned, prevEarned);
+
+  const recentQueries = chartData.slice(-3).reduce((s, d) => s + d.queries, 0);
+  const prevQueries = chartData.slice(0, 4).reduce((s, d) => s + d.queries, 0);
+  const queriesTrend = safePctChange(recentQueries, prevQueries);
+
   const recentTx = [...transactions]
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 8);
@@ -220,15 +309,15 @@ export default function DashboardPage() {
     ? datasets.filter(d => d.sellerWallet === walletFilter)
     : datasets;
 
-  if (loading) {
+  if (loading && !hasLoadedOnce) {
     return (
       <div className="min-h-screen pt-28 pb-20">
         <div className="max-w-7xl mx-auto px-4">
           {/* Header skeleton */}
           <div className="mb-10">
-            <div className="h-4 w-32 bg-surface-2/60 rounded mb-2 animate-pulse" />
-            <div className="h-10 w-64 bg-surface-2/60 rounded mb-2 animate-pulse" />
-            <div className="h-5 w-96 bg-surface-2/60 rounded animate-pulse" />
+            <Skeleton variant="text" width={128} height={16} className="mb-2" />
+            <Skeleton variant="text" width={256} height={40} className="mb-2" />
+            <Skeleton variant="text" width={384} height={20} />
           </div>
 
           {/* Stats row skeleton */}
@@ -249,15 +338,15 @@ export default function DashboardPage() {
           {/* Bottom section skeleton */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="glass-card p-6">
-              <div className="h-6 w-40 bg-surface-2/60 rounded mb-5 animate-pulse" />
+              <Skeleton variant="text" width={160} height={24} className="mb-5" />
               <div className="space-y-3">
                 {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-20 bg-surface-2/40 rounded-xl animate-pulse" />
+                  <Skeleton key={i} variant="rounded" width="100%" height={80} />
                 ))}
               </div>
             </div>
             <div className="glass-card p-6">
-              <div className="h-6 w-48 bg-surface-2/60 rounded mb-5 animate-pulse" />
+              <Skeleton variant="text" width={192} height={24} className="mb-5" />
               <div className="space-y-2">
                 {Array.from({ length: 5 }).map((_, i) => (
                   <TransactionRowSkeleton key={i} />
@@ -270,7 +359,7 @@ export default function DashboardPage() {
     );
   }
 
-  if (fetchError) {
+  if (fetchError && !hasLoadedOnce) {
     return (
       <div className="min-h-screen pt-28 flex items-center justify-center px-4">
         <div className="glass-card max-w-md w-full p-8 text-center">
@@ -299,9 +388,21 @@ export default function DashboardPage() {
             <p className="text-gold text-sm font-body font-medium tracking-widest uppercase mb-2">
               {t('dashboard.eyebrow')}
             </p>
-            <h1 className="font-display text-4xl md:text-5xl font-bold text-foreground mb-2">
-              {t('dashboard.title')}
-            </h1>
+            <div className="flex items-center gap-3 mb-2">
+              <h1 className="font-display text-4xl md:text-5xl font-bold text-foreground">
+                {t('dashboard.title')}
+              </h1>
+              {isRefetching && (
+                <span
+                  className="inline-flex items-center gap-2 rounded-full border border-gold/20 bg-gold/10 px-3 py-1 text-xs font-body font-medium text-gold"
+                  aria-live="polite"
+                >
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+                  {t('dashboard.refreshing')}
+                </span>
+              )}
+              {hasLoadedOnce && <WebSocketStatus connected={wsConnected} error={wsError} />}
+            </div>
             <p className="text-foreground-muted font-body">{t('dashboard.subtitle')}</p>
           </div>
           <Link
@@ -382,6 +483,7 @@ export default function DashboardPage() {
             prefix="$"
             decimals={4}
             color="text-gold"
+            trend={earnedTrend}
             locale={locale}
           />
           <StatCard
@@ -389,6 +491,7 @@ export default function DashboardPage() {
             label={t('dashboard.stats.totalQueries')}
             value={totalQueries}
             suffix={t('common.units.queries')}
+            trend={queriesTrend}
             locale={locale}
           />
           <StatCard
@@ -672,6 +775,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
+
             {analytics && (
               <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="glass-card p-6">
@@ -708,6 +812,65 @@ export default function DashboardPage() {
                         <span className="text-xs text-foreground-muted">
                           {buyer.count.toLocaleString(locale)} queries
                         </span>
+
+          {/* Recent transactions */}
+          <div className="glass-card p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-display font-semibold text-foreground">
+                {t('dashboard.transactions.title')}
+              </h3>
+              {isRefetching ? (
+                <Loader2
+                  className="w-4 h-4 text-gold animate-spin"
+                  aria-label={t('dashboard.refreshing')}
+                />
+              ) : (
+                <Clock className="w-4 h-4 text-muted" />
+              )}
+            </div>
+            {recentTx.length === 0 ? (
+              <div className="text-center py-8">
+                <Activity className="w-8 h-8 text-muted mx-auto mb-2" />
+                <p className="text-sm text-foreground-muted font-body">
+                  {t('dashboard.transactions.empty')}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {recentTx.map(tx => {
+                  const ds = datasets.find(d => d.id === tx.datasetId);
+                  return (
+                    <div
+                      key={tx.id}
+                      className="flex items-center gap-3 p-3 rounded-xl bg-surface-2/40 hover:bg-surface-2/70 border border-border/20 transition-all duration-200"
+                    >
+                      <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+                        <DollarSign className="w-4 h-4 text-emerald-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-body font-medium text-foreground truncate">
+                          {ds?.name ?? t('dashboard.datasets.unknownDataset')}
+                        </p>
+                        <p className="text-xs text-muted-2 font-mono truncate">
+                          {tx.txHash.startsWith('demo')
+                            ? t('dashboard.transactions.demoMode')
+                            : tx.txHash.slice(0, 20) + '...'}
+                        </p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-sm font-display font-bold text-gold">
+                          +$
+                          {(tx.amount * 0.95).toLocaleString(locale, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 4,
+                          })}
+                        </p>
+                        <p className="text-xs text-muted-2 font-body">
+                          {new Date(tx.timestamp).toLocaleDateString(locale, {
+                            dateStyle: 'medium',
+                          })}
+                        </p>
+
                       </div>
                     ))}
                   </div>

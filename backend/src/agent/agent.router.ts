@@ -1,9 +1,17 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { runResearchAgent, runResearchAgentDemo, SELLER_TYPES, AGENT_FEE_USDC } from './agent.service';
+import {
+  runResearchAgent,
+  runResearchAgentDemo,
+  SELLER_TYPES,
+  AGENT_FEE_USDC,
+  IdempotentJobResult,
+} from './agent.service';
 import { getAgentPublicKey } from './agent.wallet';
 import { validateBody } from '../common/validate';
 import { getAllDatasets } from '../common/storage';
+import { domainMetrics } from '../common/datadog';
+import { logger } from '../lib/logger';
 
 export const agentRouter = Router();
 
@@ -15,6 +23,11 @@ const researchSchema = z.object({
 const researchDemoSchema = z.object({
   query: z.string().trim().min(5, 'query must be at least 5 characters').max(1000),
 });
+
+function stripRawAnalysis<T extends { rawAnalysis?: string }>(report: T): Omit<T, 'rawAnalysis'> {
+  const { rawAnalysis: _rawAnalysis, ...clientReport } = report;
+  return clientReport;
+}
 
 /**
  * @openapi
@@ -106,7 +119,6 @@ const researchDemoSchema = z.object({
  *         description: Invalid query
  */
 
-
 // GET /api/agent/info — agent wallet address and capabilities
 agentRouter.get('/info', async (_req: Request, res: Response) => {
   const datasets = await getAllDatasets();
@@ -116,7 +128,7 @@ agentRouter.get('/info', async (_req: Request, res: Response) => {
     return {
       type: st.type,
       role: st.description,
-      cost: ds?.pricePerQuery ?? 0
+      cost: ds?.pricePerQuery ?? 0,
     };
   });
 
@@ -128,7 +140,8 @@ agentRouter.get('/info', async (_req: Request, res: Response) => {
     agent: {
       name: 'Hazina Research Agent',
       version: '1.0.0',
-      description: 'Autonomous DeFi yield researcher. Pays data sellers via x402 on Stellar, synthesises with Claude AI.',
+      description:
+        'Autonomous DeFi yield researcher. Pays data sellers via x402 on Stellar, synthesises with Claude AI.',
       agentWallet: getAgentPublicKey() ?? 'Not configured (demo-only mode)',
       fee: {
         amount: AGENT_FEE_USDC,
@@ -158,20 +171,38 @@ agentRouter.post('/research', validateBody(researchSchema), async (req: Request,
   }
 
   try {
-    console.log(`[Agent] New research job: "${query}"`);
-    const job = await runResearchAgent(query, txHash);
+    logger.info(`[Agent] New research job: "${query}"`);
+    const result = await runResearchAgent(query, txHash);
 
+    // Idempotency hit — this txHash was already processed successfully.
+    // Return the cached outcome (HTTP 200) so clients can distinguish a
+    // replay from a genuine error without retrying unnecessarily.
+    if ((result as IdempotentJobResult).idempotent) {
+      const cached = result as IdempotentJobResult;
+      return res.status(200).json({
+        success: true,
+        idempotent: true,
+        message:
+          'This transaction hash was already used for a completed research job. Returning cached result.',
+        txHash: cached.txHash,
+        query: cached.query,
+        cachedSummary: cached.cachedSummary,
+        originalTimestamp: cached.originalTimestamp,
+      });
+    }
+
+    const job = result as import('./agent.service').AgentJob;
     return res.json({
       success: true,
       jobId: job.jobId,
       query: job.query,
-      report: job.report,
+      report: stripRawAnalysis(job.report),
       payments: {
         humanPaid: 1,
         currency: 'USDC',
         network: 'Stellar',
         humanTxHash: job.humanTxHash,
-        sellerPayments: job.purchases.map((p) => ({
+        sellerPayments: job.purchases.map(p => ({
           seller: p.datasetName,
           type: p.type,
           amount: p.amountPaid,
@@ -185,13 +216,30 @@ agentRouter.post('/research', validateBody(researchSchema), async (req: Request,
         agentWallet: job.agentWallet,
         timestamp: job.timestamp,
         datasetsQueried: job.purchases.length,
+        datasetsAvailable: job.datasetsAvailable,
+        datasetsTotal: job.datasetsTotal,
       },
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Research agent error';
-    console.error('[Agent] Error:', err);
+    logger.error(`[Agent] Error: ${message}`);
 
-    if (message.includes('Payment verification failed') || message.includes('verification failed')) {
+    // Track job failure
+    const reason = message.includes('Payment verification failed')
+      ? 'payment_verification_failed'
+      : message.includes('already used')
+        ? 'tx_already_used'
+        : 'unknown_error';
+
+    domainMetrics.agentJobFailed({
+      mode: 'real',
+      reason,
+    });
+
+    if (
+      message.includes('Payment verification failed') ||
+      message.includes('verification failed')
+    ) {
       return res.status(402).json({ error: message });
     }
     if (message.includes('already used')) {
@@ -203,43 +251,55 @@ agentRouter.post('/research', validateBody(researchSchema), async (req: Request,
 
 // POST /api/agent/research/demo — demo mode, no real payments needed
 // Body: { query: string }
-agentRouter.post('/research/demo', validateBody(researchDemoSchema), async (req: Request, res: Response) => {
-  const { query } = req.body as z.infer<typeof researchDemoSchema>;
+agentRouter.post(
+  '/research/demo',
+  validateBody(researchDemoSchema),
+  async (req: Request, res: Response) => {
+    const { query } = req.body as z.infer<typeof researchDemoSchema>;
 
-  try {
-    console.log(`[Agent][Demo] New research job: "${query}"`);
-    const job = await runResearchAgentDemo(query);
+    try {
+      logger.info(`[Agent][Demo] New research job: "${query}"`);
+      const job = await runResearchAgentDemo(query);
 
-    return res.json({
-      success: true,
-      demo: true,
-      jobId: job.jobId,
-      query: job.query,
-      report: job.report,
-      payments: {
-        humanPaid: 1,
-        currency: 'USDC',
-        network: 'Stellar (simulated)',
-        note: 'Demo mode — no real Stellar transactions. All payments simulated.',
-        sellerPayments: job.purchases.map((p) => ({
-          seller: p.datasetName,
-          type: p.type,
-          amount: p.amountPaid,
-          txHash: p.txHash,
-          onChain: false,
-        })),
-        totalSpent: job.totalSpent,
-        agentProfit: job.agentProfit,
-      },
-      meta: {
-        agentWallet: job.agentWallet ?? 'demo-wallet',
-        timestamp: job.timestamp,
-        datasetsQueried: job.purchases.length,
-      },
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Research agent error';
-    console.error('[Agent][Demo] Error:', err);
-    return res.status(500).json({ error: message });
-  }
-});
+      res.setHeader('X-Demo-Mode', 'true');
+      return res.json({
+        success: true,
+        demo: true,
+        disclaimer:
+          'DEMO MODE: All payments, transaction hashes, and wallet addresses are simulated. No real blockchain activity occurred.',
+        jobId: job.jobId,
+        query: job.query,
+        report: stripRawAnalysis(job.report),
+        payments: {
+          humanPaid: 1,
+          currency: 'USDC',
+          network: 'Stellar (simulated)',
+          note: 'Demo mode — no real Stellar transactions. All payments simulated.',
+          disclaimer: 'SIMULATED: These payments did not occur on any blockchain.',
+          sellerPayments: job.purchases.map(p => ({
+            seller: p.datasetName,
+            type: p.type,
+            amount: p.amountPaid,
+            txHash: p.txHash,
+            onChain: false,
+            simulated: true,
+            disclaimer: '[SIMULATED] Not a real transaction — demo mode only',
+          })),
+          totalSpent: job.totalSpent,
+          agentProfit: job.agentProfit,
+        },
+        meta: {
+          agentWallet: job.agentWallet ?? 'demo-wallet',
+          timestamp: job.timestamp,
+          datasetsQueried: job.purchases.length,
+          datasetsAvailable: job.datasetsAvailable,
+          datasetsTotal: job.datasetsTotal,
+        },
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Research agent error';
+      logger.error('[Agent][Demo] Error:', err);
+      return res.status(500).json({ error: message });
+    }
+  },
+);

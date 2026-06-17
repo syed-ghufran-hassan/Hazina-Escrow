@@ -39,6 +39,8 @@ export const sw: EnglishMessages = {
       resetSearch: 'Weka upya utafutaji',
       copyAddress: 'Nakili anwani',
       copyMemo: 'Nakili memo',
+      connectWallet: 'Unganisha wallet',
+      disconnect: 'Tenganisha',
     },
     labels: {
       price: 'Bei',
@@ -93,8 +95,13 @@ export const sw: EnglishMessages = {
       dayAgo: 'siku {count} zilizopita',
     },
     errors: {
-      imageNotSupported: "Picha haisisimamiwi",
+      imageNotSupported: 'Picha haisisimamiwi',
     },
+  },
+  websocket: {
+    connected: 'Moja kwa moja',
+    disconnected: 'Nje ya mtandao',
+    error: 'Hitilafu ya muunganisho',
   },
   nav: {
     marketplace: 'Soko',
@@ -102,7 +109,11 @@ export const sw: EnglishMessages = {
     sell: 'Uza data',
     dashboard: 'Dashibodi',
     mobileMenu: 'Menyu',
+    openMobileMenu: 'Fungua menyu',
+    closeMobileMenu: 'Funga menyu',
     brand: 'Hazina',
+    connectWallet: 'Unganisha wallet',
+    disconnect: 'Tenganisha',
   },
   dataTypes: {
     all: 'Aina zote',
@@ -232,6 +243,7 @@ export const sw: EnglishMessages = {
       listingLiveBody: '{name} sasa ipo sokoni.',
       listingLiveRevenue:
         'Wanunuzi wanaweza kuuliza kwa {price} USDC kila moja. 95% huenda moja kwa moja kwenye wallet yako ya Stellar.',
+      draftRestored: 'Rasimu ilirejeziwa kutoka kwa kipindi chako kilichopita',
     },
     eyebrow: 'Pata mapato pasivu',
     title: 'Orodhesha data yako',
@@ -249,6 +261,7 @@ export const sw: EnglishMessages = {
         'Eleza data yako ina nini, ilikusanywaje, na kwa nini wanunuzi wataitaka...',
       dataType: 'Aina ya data',
       pricePerQuery: 'Bei / swali (USDC)',
+      pricePerQueryError: 'Bei lazima iwe kubwa kuliko 0',
       quickPricePresets: 'Bei za haraka:',
       sellerWallet: 'Anwani yako ya Stellar Wallet',
       sellerWalletPlaceholder: 'G... (ufunguo wa umma wa Stellar wa herufi 56)',
@@ -301,6 +314,7 @@ export const sw: EnglishMessages = {
     title: 'Dashibodi',
     subtitle: 'Mapato yako ya wakati halisi na utendaji wa dataset zako.',
     loadError: 'Imeshindikana kupakia dashibodi',
+    refreshing: 'Inasasisha',
     allSellers: 'Wauzaji wote',
     stats: {
       totalEarned: 'Jumla ya USDC iliyopatikana',
@@ -350,6 +364,17 @@ export const sw: EnglishMessages = {
     demoModeNote: 'Hali ya demo — malipo yameigwa kwenye Stellar testnet',
     loading: 'Inatafiti...',
     errorTitle: 'Hitilafu ya wakala',
+    rateLimitError: 'Maombi mengi sana — tafadhali subiri kidogo kabla ya kujaribu tena.',
+    minLengthError: 'Swali lazima liwe na angalau herufi 5.',
+    payAndResearch: 'Lipa {amount} USDC na ufanye utafiti',
+    paidModeNote: 'Pochi imeunganishwa — lipa {amount} USDC kwa utafiti halisi kwenye mtandao',
+    runDemoInstead: 'Endesha onyesho bila malipo',
+    payInstructions:
+      'Lipa {amount} USDC kwa pochi yako, kisha bandika hash ya muamala ili kuendesha utafiti.',
+    payToAddress: 'Anwani ya amana ya wakala',
+    txReceived: 'Hash ya muamala imepokelewa — thibitisha ili kuendesha utafiti.',
+    txPending: 'Kamilisha malipo kwenye pochi yako, kisha bandika hash ya muamala hapa chini.',
+    confirmAndResearch: 'Thibitisha na ufanye utafiti',
     result: {
       topOpportunity: 'Fursa bora',
       reasoning: 'Hoja',

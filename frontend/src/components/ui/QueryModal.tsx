@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   X,
@@ -13,6 +13,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, DatasetMeta, QueryResult } from '../../lib/api';
+import { useToastContext } from './ToastProvider';
 import { formatUSDC, getTypeMeta, truncateAddress } from '../../lib/utils';
 import { launchStellarWalletProvider } from '../../lib/stellarWallets';
 import type { StellarWalletProvider } from '../../lib/stellarWallets';
@@ -25,11 +26,13 @@ interface Props {
   dataset: DatasetMeta;
   onClose: () => void;
   onSuccess: (updated: Partial<DatasetMeta> & { id: string }) => void;
+  isOpen?: boolean;
 }
 
-export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
+export default function QueryModal({ dataset, onClose, onSuccess, isOpen = true }: Props) {
   const { locale, t } = useI18n();
   const catalog = getCatalog(locale);
+  const { success: toastSuccess, error: toastError } = useToastContext();
   const [step, setStep] = useState<Step>('details');
   const [paymentInfo, setPaymentInfo] = useState<{
     paymentAddress: string;
@@ -46,20 +49,39 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
   const [walletStatus, setWalletStatus] = useState('');
   const verifyTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(modalRef, step !== 'result' && step !== 'error');
+  const titleId = useId();
+  useFocusTrap(modalRef);
 
   const typeMeta = getTypeMeta(dataset.type);
   const typeLabel = typeMeta.labelKey ? t(typeMeta.labelKey) : typeMeta.label;
   const verifyingStages = catalog.queryModal.verifyingStages;
+  const enableDemoMode = isDemoModeEnabled();
+
+  // Reset all state when the modal is (re)opened so stale results from a
+  // previous session never bleed through when the same component instance is
+  // reused across open/close cycles.
+  useEffect(() => {
+    if (isOpen) {
+      setStep('details');
+      setError('');
+      setTxHash('');
+      setBuyerQuestion('');
+      setResult(null);
+      setPaymentInfo(null);
+      setVerifyStage(0);
+      setWalletStatus('');
+      setUseDemoMode(false);
+    }
+  }, [isOpen]);
 
   // Fetch 402 payment details
   useEffect(() => {
-    if (step === 'payment' && !paymentInfo) {
+    if (isOpen && step === 'payment' && !paymentInfo) {
       api.initiateQuery(dataset.id).then(res => {
         if (res.payment) setPaymentInfo(res.payment);
       });
     }
-  }, [step, paymentInfo, dataset.id]);
+  }, [isOpen, step, paymentInfo, dataset.id]);
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -84,7 +106,7 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
     }, 1800);
     try {
       let res: QueryResult;
-      if (useDemoMode) {
+      if (enableDemoMode && useDemoMode) {
         res = await api.demoQuery(dataset.id, buyerQuestion);
       } else {
         res = await api.verifyPayment(dataset.id, txHash.trim(), buyerQuestion);
@@ -92,16 +114,21 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
       clearVerifyTimer();
       setResult(res);
       setStep('result');
+      toastSuccess(t('queryModal.result.paymentVerified'), dataset.name);
+      const delivered = res.transaction.deliveryStatus === 'delivered';
       onSuccess({
         id: dataset.id,
-        queriesServed: dataset.queriesServed + 1,
-        totalEarned: res.demo
-          ? dataset.totalEarned
-          : dataset.totalEarned + res.transaction.sellerReceived,
+        queriesServed: delivered || res.demo ? dataset.queriesServed + 1 : dataset.queriesServed,
+        totalEarned:
+          res.demo || !delivered
+            ? dataset.totalEarned
+            : dataset.totalEarned + res.transaction.sellerReceived,
       });
     } catch (err: unknown) {
       clearVerifyTimer();
-      setError(err instanceof Error ? err.message : t('queryModal.error.title'));
+      const msg = err instanceof Error ? err.message : t('queryModal.error.title');
+      setError(msg);
+      toastError(t('queryModal.error.title'), msg);
       setStep('error');
     }
   };
@@ -138,6 +165,8 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
     }
   }, [step, onClose]);
 
+  if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
@@ -152,7 +181,8 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
         ref={modalRef}
         role="dialog"
         aria-modal="true"
-        aria-label={t('queryModal.details.title')}
+        aria-labelledby={titleId}
+        tabIndex={-1}
         className="relative w-full max-w-lg glass-card-gold overflow-hidden max-h-[90vh] overflow-y-auto"
       >
         {/* Gold top bar */}
@@ -167,7 +197,10 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
               <Zap className="w-3 h-3" />
               {typeLabel}
             </span>
-            <h2 className="font-display font-bold text-xl text-foreground leading-tight">
+            <h2
+              id={titleId}
+              className="font-display font-bold text-xl text-foreground leading-tight"
+            >
               {dataset.name}
             </h2>
           </div>
@@ -417,22 +450,23 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
               </div>
 
               {/* Demo mode toggle */}
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-2/60 border border-border/40 mb-4">
-                <input
-                  type="checkbox"
-                  id="demo-mode"
-                  checked={useDemoMode}
-                  onChange={e => setUseDemoMode(e.target.checked)}
-                  className="w-4 h-4 accent-amber-400"
-                />
-                <label htmlFor="demo-mode" className="text-xs text-foreground-muted font-body">
-                  <span className="text-amber-400 font-medium">
-                    {t('queryModal.payment.demoModeLabel')}
-                  </span>{' '}
-                  — {t('queryModal.payment.demoModeDescription')}
-                </label>
-              </div>
-
+              {enableDemoMode && (
+                <div className="flex items-center gap-3 p-3 rounded-xl bg-surface-2/60 border border-border/40 mb-4">
+                  <input
+                    type="checkbox"
+                    id="demo-mode"
+                    checked={useDemoMode}
+                    onChange={e => setUseDemoMode(e.target.checked)}
+                    className="w-4 h-4 accent-amber-400"
+                  />
+                  <label htmlFor="demo-mode" className="text-xs text-foreground-muted font-body">
+                    <span className="text-amber-400 font-medium">
+                      {t('queryModal.payment.demoModeLabel')}
+                    </span>{' '}
+                    — {t('queryModal.payment.demoModeDescription')}
+                  </label>
+                </div>
+              )}
               <div className="flex gap-3">
                 <button
                   onClick={() => setStep('details')}
@@ -505,15 +539,48 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
           {/* ── RESULT ── */}
           {step === 'result' && result && (
             <div>
-              <div className="flex items-center gap-2 mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
-                <ShieldCheck className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+              <div
+                className={clsx(
+                  'flex items-center gap-2 mb-4 p-3 rounded-xl border',
+                  result.transaction.deliveryStatus === 'delivered'
+                    ? 'bg-emerald-500/10 border-emerald-500/25'
+                    : 'bg-amber-500/10 border-amber-500/25',
+                )}
+              >
+                <ShieldCheck
+                  className={clsx(
+                    'w-5 h-5 flex-shrink-0',
+                    result.transaction.deliveryStatus === 'delivered'
+                      ? 'text-emerald-400'
+                      : 'text-amber-400',
+                  )}
+                />
                 <div>
-                  <p className="text-sm font-body font-semibold text-emerald-400">
-                    {t('queryModal.result.paymentVerified')}
+                  <p
+                    className={clsx(
+                      'text-sm font-body font-semibold',
+                      result.transaction.deliveryStatus === 'delivered'
+                        ? 'text-emerald-400'
+                        : 'text-amber-400',
+                    )}
+                  >
+                    {result.transaction.deliveryStatus === 'delivered'
+                      ? t('queryModal.result.paymentVerified')
+                      : 'Payment received, delivery pending'}
                   </p>
-                  <p className="text-xs text-emerald-400/70 font-body font-mono">
+                  <p
+                    className={clsx(
+                      'text-xs font-mono',
+                      result.transaction.deliveryStatus === 'delivered'
+                        ? 'text-emerald-400/70'
+                        : 'text-amber-400/70',
+                    )}
+                  >
                     {result.transaction.hash.slice(0, 40)}...
                   </p>
+                  {result.warning && (
+                    <p className="text-xs text-amber-300/80 font-body mt-1">{result.warning}</p>
+                  )}
                 </div>
               </div>
 
@@ -551,37 +618,49 @@ export default function QueryModal({ dataset, onClose, onSuccess }: Props) {
                     {t('queryModal.result.aiAnalysis')}
                   </p>
                 </div>
-                <p className="text-sm text-foreground font-body leading-relaxed">
-                  {result.ai.summary}
-                </p>
-                {result.ai.answer && (
-                  <div className="mt-3 pt-3 border-t border-gold/10">
-                    <p className="text-xs font-body font-semibold text-gold mb-1">
-                      {t('common.labels.answerToQuestion')}
-                    </p>
+                {result.ai?.summary ? (
+                  <>
                     <p className="text-sm text-foreground font-body leading-relaxed">
-                      {result.ai.answer}
+                      {result.ai.summary}
                     </p>
-                  </div>
+                    {result.ai.answer && (
+                      <div className="mt-3 pt-3 border-t border-gold/10">
+                        <p className="text-xs font-body font-semibold text-gold mb-1">
+                          {t('common.labels.answerToQuestion')}
+                        </p>
+                        <p className="text-sm text-foreground font-body leading-relaxed">
+                          {result.ai.answer}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-foreground-muted font-body leading-relaxed">
+                    The payment was verified, but delivery is still being retried. You can keep this
+                    window open or come back later to see the delivered data.
+                  </p>
                 )}
               </div>
 
               {/* Raw data preview */}
-              <div className="mb-5">
-                <p className="text-xs font-body font-semibold text-foreground-muted mb-2">
-                  {t('common.labels.rawDataPreview')}
-                </p>
-                <div className="bg-void rounded-xl p-4 max-h-48 overflow-auto border border-border/40">
-                  <pre className="text-xs font-mono text-foreground-muted leading-relaxed whitespace-pre-wrap">
-                    {JSON.stringify(result.data, null, 2).slice(0, 1200)}
-                    {JSON.stringify(result.data, null, 2).length > 1200 ? '\n...' : ''}
-                  </pre>
+              {result.data && (
+                <div className="mb-5">
+                  <p className="text-xs font-body font-semibold text-foreground-muted mb-2">
+                    {t('common.labels.rawDataPreview')}
+                  </p>
+                  <div className="bg-void rounded-xl p-4 max-h-48 overflow-auto border border-border/40">
+                    <pre className="text-xs font-mono text-foreground-muted leading-relaxed whitespace-pre-wrap">
+                      {JSON.stringify(result.data, null, 2).slice(0, 1200)}
+                      {JSON.stringify(result.data, null, 2).length > 1200 ? '\n...' : ''}
+                    </pre>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="flex gap-3">
                 <button
                   onClick={() => {
+                    if (!result.data) return;
                     const blob = new Blob([JSON.stringify(result.data, null, 2)], {
                       type: 'application/json',
                     });

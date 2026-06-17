@@ -433,6 +433,24 @@ docker compose down
 docker compose -f docker-compose.prod.yml down
 ```
 
+### Image vulnerability scanning
+
+The production backend and frontend images are scanned for known CVEs by the
+[`Container Image Scan`](.github/workflows/container-scan.yml) GitHub Actions
+workflow. On every pull request and push to `main` that touches `backend/` or
+`frontend/`, each image is built and scanned with
+[Trivy](https://github.com/aquasecurity/trivy); the build fails on any fixable
+`HIGH` or `CRITICAL` OS/library vulnerability. Results are also published to the
+repository's **Security → Code scanning** tab, and a weekly scheduled run
+re-scans the images to catch CVEs disclosed after the last build.
+
+To reproduce a scan locally:
+
+```bash
+docker build -t hazina-backend:scan --target production ./backend
+trivy image --severity HIGH,CRITICAL --ignore-unfixed hazina-backend:scan
+```
+
 ---
 
 ## Pages & Features
@@ -552,17 +570,32 @@ All seller wallets are funded Stellar testnet accounts with USDC trustlines, rea
 
 ## Environment Variables
 
+### Backend Variables (`backend/.env`)
+
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | Claude API key — [console.anthropic.com](https://console.anthropic.com) |
+| `DATABASE_URL` | Yes | Database connection string (e.g. `file:./sqlite.db`) |
 | `ESCROW_WALLET` | Yes | Stellar address that receives buyer payments |
 | `AGENT_WALLET_SECRET` | Yes | Agent's Stellar secret key (signs outgoing seller payments) |
-| `AGENT_WALLET_PUBLIC` | No | Agent's Stellar public key (display only) |
-| `ESCROW_CONTRACT_ID` | No | Soroban contract address (for on-chain escrow integration) |
-| `PLATFORM_FEE` | No | Platform cut as decimal (default: 0.05) |
+| `ESCROW_CONTRACT_ID` | Yes | Soroban contract address for on-chain escrow enforcement |
+| `API_KEY` | Yes | Key for dataset creation (must match frontend `VITE_API_KEY`) |
+| `ADMIN_API_KEY` | Yes | Key for administrative actions like backups |
+| `SELLER_JWT_SECRET` | Yes | Secret for signing/verifying seller dashboard JWTs |
+| `PAYMENT_WEBHOOK_SECRET` | Yes | Shared secret for verifying incoming payment webhooks |
+| `STELLAR_NETWORK` | No | 'testnet' or 'mainnet' (default: 'testnet') |
 | `PORT` | No | API port (default: 3001) |
-| `CORS_ALLOWED_ORIGINS` | No | Comma-separated CORS origin whitelist (development default: http://localhost:5173) |
-| `FRONTEND_URL` | No | Legacy single CORS origin fallback when `CORS_ALLOWED_ORIGINS` is unset |
+| `FRONTEND_URL` | No | URL of the frontend for CORS |
+
+### Frontend Variables (`frontend/.env`)
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VITE_API_URL` | Yes | Base URL of the backend API (e.g. http://localhost:3001) |
+| `VITE_API_KEY` | Yes | API key for backend auth (must match backend `API_KEY`) |
+| `VITE_STELLAR_NETWORK` | No | 'testnet' or 'public' (default: 'testnet') |
+| `VITE_USDC_ISSUER` | No | Override for USDC asset issuer address |
+| `VITE_MAX_CONCURRENT_REQUESTS` | No | Limit on parallel API calls (default: 8) |
 
 ---
 
@@ -578,3 +611,15 @@ Afrofuturist aesthetic — luxury dark theme inspired by the Kente cloth geometr
 | Body font | DM Sans |
 | Cards | Glass morphism with gold borders |
 | Patterns | Kente-inspired SVG geometry |
+
+
+---
+
+## API Versioning
+
+All backend HTTP routes are now served under /api/v1/.
+- The server still accepts requests to legacy /api/ paths and redirects them to /api/v1/ with a deprecation Warning header.
+- During the migration we updated the frontend and backend tests to use /api/v1/.
+
+If you're running locally, update any proxies or API clients to use /api/v1/.
+
