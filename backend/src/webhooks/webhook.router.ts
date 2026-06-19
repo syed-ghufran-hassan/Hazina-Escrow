@@ -15,6 +15,7 @@ import { notifySeller, signPayload } from './webhook.service';
 import { requireApiKey } from '../common/auth.middleware';
 import { encryptSecret } from '../common/secret-crypto';
 import { processPayment } from '../payments/payments.service';
+import { logger } from '../lib/logger';
 
 export const webhooksRouter = Router();
 

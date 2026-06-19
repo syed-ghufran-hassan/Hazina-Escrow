@@ -75,6 +75,7 @@ describe('Webhook Router', () => {
     app.use('/api/v1/webhooks', webhooksRouter);
 
     process.env.PAYMENT_WEBHOOK_SECRET = 'test-secret';
+    process.env.WEBHOOK_SECRET_KEY = crypto.randomBytes(32).toString('hex');
   });
 
   afterEach(() => {

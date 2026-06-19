@@ -129,6 +129,7 @@ export default function SellPage() {
   // Track if we've shown the draft restored toast
   const hasShownRestoreToastRef = useRef(false);
   const confirmBtnRef = useRef<HTMLButtonElement>(null);
+  const isFirstRenderRef = useRef(true);
 
   // Show draft restored notification on first load
   useEffect(() => {
@@ -145,8 +146,13 @@ export default function SellPage() {
     }
   }, [t]);
 
-  // Persist form draft across page reloads
+  // Persist form draft across page reloads. Skip the mount-time run so an
+  // untouched (or freshly-expired) form doesn't immediately write a draft.
   useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false;
+      return;
+    }
     saveDraft(form);
   }, [form]);
 

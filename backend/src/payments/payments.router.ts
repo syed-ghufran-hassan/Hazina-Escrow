@@ -6,10 +6,8 @@ import { sellerShare, platformFee as computePlatformFee } from '../common/consta
 import { generateDataSummary } from '../ai/claude.service';
 import { sanitizeUserText } from '../common/sanitize';
 import { requireAdminKey } from '../common/auth.middleware';
-import { scheduleRetrySweep } from './payout-retry.service';
 import { transactionEventEmitter } from '../websocket/transaction-events';
 import { domainMetrics } from '../common/datadog';
-import { deliverVerifiedPayment, markDeliveryFailure, processPayment } from './payments.service';
 import { PaymentError, StellarTimeoutError } from './stellar.service';
 import { logger } from '../lib/logger';
 import {
@@ -17,13 +15,9 @@ import {
   updateDataset,
   addTransaction,
   getUnpaidTransactions,
+  getFailedDeliveryTransactions,
+  txHashUsed,
 } from '../common/storage';
-import { validateBody } from '../common/validate';
-import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
-import { generateDataSummary } from '../ai/claude.service';
-import { sanitizeUserText } from '../common/sanitize';
-import { transactionEventEmitter } from '../websocket/transaction-events';
-import { requireAdminKey } from '../common/auth.middleware';
 import {
   getManualReviewPayouts,
   recordPayoutFailure,
@@ -38,7 +32,6 @@ import {
   startSellerNotificationRetryWorker,
   stopSellerNotificationRetryWorker,
 } from './payments.service';
-import { PaymentError, StellarTimeoutError } from './stellar.service';
 
 export const paymentsRouter = Router();
 

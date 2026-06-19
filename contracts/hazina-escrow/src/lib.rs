@@ -1,13 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-
-    Address, BytesN, Env, String, Vec, contract, contracterror, contractimpl, contracttype,
-    panic_with_error, token,
-
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token,
-    Address, Env, String, Vec,
-
+    Address, BytesN, Env, String, Vec,
 };
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -19,8 +14,6 @@ const ESCROW_BUMP_LEDGERS: u32 = 518_400;
 const ESCROW_MIN_TTL: u32 = 17_280;
 const MAX_BASIS_POINTS: u32 = 10_000;
 const DISPUTE_WINDOW_LEDGERS: u32 = 1_000;
-
-const MAX_BASIS_POINTS: u32 = 10_000;
 
 /// Hard cap on the platform fee: 2 000 bps = 20 %.
 const MAX_FEE_BPS: u32 = 2_000;
@@ -80,13 +73,6 @@ pub enum HazinaEscrowError {
     EmptyDatasetId = 11,
     Paused = 12,
 
-    AlreadyDisputed = 13,
-    NotBuyer = 14,
-    DisputeDeadlinePassed = 15,
-    NotArbitrator = 16,
-    DisputedEscrow = 17,
-    NotDisputed = 18,
-
     AmountExceedsCircuitBreaker = 13,
     RateLimitExceeded = 14,
     NotPaused = 15,
@@ -96,6 +82,11 @@ pub enum HazinaEscrowError {
     NotSeller = 19,
     NotExpired = 20,
 
+    AlreadyDisputed = 21,
+    DisputeDeadlinePassed = 22,
+    NotArbitrator = 23,
+    DisputedEscrow = 24,
+    NotDisputed = 25,
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -591,10 +582,36 @@ impl HazinaEscrow {
     }
 
     pub fn raise_dispute(env: Env, buyer: Address, escrow_id: u64, evidence_hash: BytesN<32>) {
+        buyer.require_auth();
+        let mut record = Self::read_escrow(&env, escrow_id);
+        if record.buyer != buyer {
+            panic_with_error!(&env, HazinaEscrowError::NotBuyer);
+        }
+        if record.released {
+            panic_with_error!(&env, HazinaEscrowError::AlreadyReleased);
+        }
+        if record.refunded {
+            panic_with_error!(&env, HazinaEscrowError::AlreadyRefunded);
+        }
+        if record.disputed {
+            panic_with_error!(&env, HazinaEscrowError::AlreadyDisputed);
+        }
+        let deadline = record.dispute_deadline.unwrap_or(0);
+        if env.ledger().sequence() as u64 > deadline {
+            panic_with_error!(&env, HazinaEscrowError::DisputeDeadlinePassed);
+        }
+        record.disputed = true;
+        env.storage()
+            .persistent()
+            .set(&EscrowKey::Record(escrow_id), &record);
+        env.events().publish(
+            (soroban_sdk::symbol_short!("disp_up"),),
+            (escrow_id, buyer, evidence_hash, deadline),
+        );
+    }
 
     /// Buyer confirms delivery, unblocking the admin `release` call.
     pub fn confirm_delivery(env: Env, escrow_id: u64, buyer: Address) {
-
         buyer.require_auth();
         let mut record = Self::read_escrow(&env, escrow_id);
         if record.buyer != buyer {
@@ -615,18 +632,12 @@ impl HazinaEscrow {
         if record.disputed {
             panic_with_error!(&env, HazinaEscrowError::AlreadyDisputed);
         }
-        let deadline = record.dispute_deadline.unwrap_or(0);
-        if env.ledger().sequence() as u64 > deadline {
-            panic_with_error!(&env, HazinaEscrowError::DisputeDeadlinePassed);
-        }
-        record.disputed = true;
+        record.buyer_confirmed = true;
         env.storage()
             .persistent()
             .set(&EscrowKey::Record(escrow_id), &record);
-        env.events().publish(
-            (soroban_sdk::symbol_short!("disp_up"),),
-            (escrow_id, buyer, evidence_hash, deadline),
-        );
+        env.events()
+            .publish((symbol_short!("confirm"),), (escrow_id, buyer));
     }
 
     pub fn resolve_dispute(env: Env, arbitrator: Address, escrow_id: u64, favour_buyer: bool) {
@@ -646,14 +657,6 @@ impl HazinaEscrow {
             (soroban_sdk::symbol_short!("disp_res"),),
             (escrow_id, favour_buyer, arbitrator),
         );
-
-        record.buyer_confirmed = true;
-        env.storage()
-            .persistent()
-            .set(&EscrowKey::Record(escrow_id), &record);
-        env.events()
-            .publish((symbol_short!("confirm"),), (escrow_id, buyer));
-
     }
 
     pub fn release(env: Env, admin: Address, escrow_id: u64) {
@@ -684,14 +687,6 @@ impl HazinaEscrow {
         Self::refund_one(&env, escrow_id);
     }
 
-    pub fn get_escrow(env: Env, escrow_id: u64) -> EscrowRecord {
-        Self::read_escrow(&env, escrow_id)
-    }
-
-    pub fn set_fee(env: Env, admin: Address, fee_bps: u32) {
-        Self::set_default_fee(env, admin, fee_bps);
-    }
-
     pub fn set_admin(env: Env, admin: Address, new_admin: Address) {
         Self::transfer_admin(env, admin, new_admin);
     }
@@ -713,8 +708,6 @@ impl HazinaEscrow {
     }
 
     fn refund_one(env: &Env, escrow_id: u64) {
-        let mut record = Self::read_escrow(env, escrow_id);
-
         Self::assert_not_paused(&env);
 
         env.storage().persistent().extend_ttl(
@@ -723,8 +716,7 @@ impl HazinaEscrow {
             ESCROW_BUMP_LEDGERS,
         );
 
-        let mut record = Self::read_escrow(&env, escrow_id);
-
+        let mut record = Self::read_escrow(env, escrow_id);
 
         if record.released {
             panic_with_error!(env, HazinaEscrowError::AlreadyReleased);
@@ -753,17 +745,14 @@ impl HazinaEscrow {
     fn release_disputed_one(env: &Env, admin: &Address, escrow_id: u64) {
         let mut record = Self::read_escrow(env, escrow_id);
         record.disputed = false;
+        // Arbitrator's decision overrides the buyer-confirmation requirement —
+        // that gate exists to protect an unresponsive buyer, not a buyer who
+        // has already had their dispute heard and resolved against them.
+        record.buyer_confirmed = true;
         env.storage()
             .persistent()
             .set(&EscrowKey::Record(escrow_id), &record);
         Self::release_one(env, admin, escrow_id);
-    }
-
-    fn get_admin(env: &Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(env, HazinaEscrowError::NotInitialized))
     }
 
     /// Seller claims funds after the escrow deadline has passed without release.
@@ -940,10 +929,10 @@ impl HazinaEscrow {
 
         if record.disputed {
             panic_with_error!(env, HazinaEscrowError::DisputedEscrow);
+        }
 
         if !record.buyer_confirmed {
             panic_with_error!(env, HazinaEscrowError::BuyerNotConfirmed);
-
         }
 
         let calculated_cut =
@@ -976,16 +965,6 @@ impl HazinaEscrow {
             (escrow_id, record.seller, seller_cut, platform_cut),
         );
     }
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::{
-        Address, Env, String,
-        testutils::{Address as _, Ledger},
-        token::{Client as TokenClient, StellarAssetClient},
-    };
 
     fn read_escrow(env: &Env, escrow_id: u64) -> EscrowRecord {
         env.storage()
@@ -1104,6 +1083,7 @@ mod tests {
             &usdc,
             &1_000_000,
             &dataset_id(&env, "ds-dispute-buyer"),
+            &3600,
         );
         let evidence = soroban_sdk::BytesN::from_array(&env, &[7; 32]);
         client.raise_dispute(&buyer, &escrow_id, &evidence);
@@ -1124,6 +1104,7 @@ mod tests {
             &usdc,
             &1_000_000,
             &dataset_id(&env, "ds-dispute-seller"),
+            &3600,
         );
         let evidence = soroban_sdk::BytesN::from_array(&env, &[8; 32]);
         client.raise_dispute(&buyer, &escrow_id, &evidence);
@@ -1143,6 +1124,7 @@ mod tests {
             &usdc,
             &1_000_000,
             &dataset_id(&env, "ds-dispute-release"),
+            &3600,
         );
         let evidence = soroban_sdk::BytesN::from_array(&env, &[9; 32]);
         client.raise_dispute(&buyer, &escrow_id, &evidence);
@@ -1159,6 +1141,7 @@ mod tests {
             &usdc,
             &1_000_000,
             &dataset_id(&env, "ds-dispute-expired"),
+            &3600,
         );
         let record = client.get_escrow(&escrow_id);
         env.ledger()
@@ -1181,6 +1164,7 @@ mod tests {
             &usdc,
             &amount,
             &dataset_id(&env, "ds-delegated-arb"),
+            &3600,
         );
         let evidence = soroban_sdk::BytesN::from_array(&env, &[11; 32]);
         client.raise_dispute(&buyer, &escrow_id, &evidence);

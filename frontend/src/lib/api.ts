@@ -146,62 +146,11 @@ export interface AgentInfo {
   };
 }
 
-
-export interface DatasetMeta {
-  id: string;
-  name: string;
-  description: string;
-  type: string;
-  pricePerQuery: number;
-  sellerWallet: string;
-  queriesServed: number;
-  totalEarned: number;
-  createdAt: string;
-  thumbnail?: string;
-}
-
-export interface Transaction {
-  id: string;
-  datasetId: string;
-  txHash: string;
-  amount: number;
-  buyerQuery?: string;
-  aiSummary?: string;
-  timestamp: string;
-}
-
 export interface SellerAnalytics {
   revenueSeries: { date: string; usdc: number }[];
   queryVolumeSeries: { date: string; count: number }[];
   datasetBreakdown: { id: string; name: string; earned: number; queries: number }[];
   topBuyers: { wallet: string; count: number }[];
-}
-
-export interface Stats {
-  totalDatasets: number;
-  totalQueries: number;
-  totalUsdcEarned: number;
-  totalTransactions: number;
-}
-
-export interface PaginatedDatasets {
-  data: DatasetMeta[];
-  total: number;
-  page: number;
-  totalPages: number;
-}
-
-export interface QueryResult {
-  success: boolean;
-  demo?: boolean;
-  data: Record<string, unknown>;
-  ai: { summary: string; answer?: string };
-  transaction: {
-    hash: string;
-    amount: number;
-    sellerReceived: number;
-    platformFee: number;
-  };
 }
 
 export const DatasetMetaSchema = z.object({
@@ -263,7 +212,6 @@ export const QueryResultSchema = z.object({
   }),
 });
 export type QueryResult = z.infer<typeof QueryResultSchema>;
-
 
 interface RequestOptions extends RequestInit {
   /** Per-call override of the abort timeout, in milliseconds. */
@@ -397,7 +345,7 @@ export const api = {
 
   getSellerAnalytics: (wallet: string) =>
     request<{ success: boolean } & SellerAnalytics>(
-      `${BASE}/analytics/seller/${encodeURIComponent(wallet)}`,
+      `${getApiBaseUrl()}/analytics/seller/${encodeURIComponent(wallet)}`,
     ).then(r => ({
       revenueSeries: r.revenueSeries,
       queryVolumeSeries: r.queryVolumeSeries,

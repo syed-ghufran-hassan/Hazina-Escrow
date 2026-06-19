@@ -46,7 +46,8 @@ export class BackupService {
     try {
       await this.ensureBackupDirectory();
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `backup-${timestamp}.json`;
+      const unique = Math.random().toString(36).slice(2, 8);
+      const filename = `backup-${timestamp}-${unique}.json`;
       const backupPath = path.join(this.config.backupDir, filename);
 
       // Read raw bytes once — avoids the parse→object→stringify round-trip that

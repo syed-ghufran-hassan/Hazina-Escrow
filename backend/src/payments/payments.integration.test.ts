@@ -120,6 +120,8 @@ describeSocket('payments and agent integration routes', () => {
       purchases: [],
       totalSpent: 0.14,
       agentProfit: 0.86,
+      datasetsAvailable: 4,
+      datasetsTotal: 4,
       report: {
         topOpportunity: {
           protocol: 'Aave',
