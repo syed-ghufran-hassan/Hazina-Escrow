@@ -25,6 +25,7 @@ import {
 import { agentRouter } from './agent/agent.router';
 import { validateAgentWallet } from './agent/agent.wallet';
 import { webhooksRouter } from './webhooks/webhook.router';
+import { analyticsRouter } from './analytics.router';
 import { readStore } from './common/storage';
 import { BackupScheduler } from './common/backup.scheduler';
 import { backupRouter, setBackupScheduler } from './common/backup.router';
@@ -284,6 +285,15 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   res.redirect(308, targetUrl);
 });
 
+
+// Routes
+app.use('/api/datasets', datasetsRouter);
+app.use('/api', paymentsRouter);
+app.use('/api/agent', agentRouter);
+app.use('/api/webhooks', webhooksRouter);
+app.use('/api/analytics', analyticsRouter);
+app.use('/api', backupRouter);
+
 // Global error handling middleware — Issue #283 (standard error shape)
 app.use(
   (
@@ -318,6 +328,7 @@ app.use(
 
 startDeliveryRetryWorker();
 startSellerNotificationRetryWorker();
+
 
 // Create HTTP server and attach Express app
 const server = http.createServer(app);

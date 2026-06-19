@@ -168,11 +168,19 @@
                     },
                     {
                       "string": "ds-002"
+
                     },
                     {
                       "string": "ds-003"
                     },
                     {
+
+                    },
+                    {
+                      "string": "ds-003"
+                    },
+                    {
+
                       "string": "ds-004"
                     }
                   ]
@@ -209,6 +217,7 @@
       ]
     ],
     [],
+
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -297,6 +306,7 @@
         }
       ]
     ],
+
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
@@ -714,10 +724,25 @@
                     },
                     {
                       "key": {
+
+                        "symbol": "dispute_deadline"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "disputed"
+                      },
+                      "val": {
+                        "bool": false
+
                         "symbol": "deadline"
                       },
                       "val": {
                         "u64": 4600
+
                       }
                     },
                     {
@@ -851,10 +876,25 @@
                     },
                     {
                       "key": {
+
+                        "symbol": "dispute_deadline"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "disputed"
+                      },
+                      "val": {
+                        "bool": false
+
                         "symbol": "deadline"
                       },
                       "val": {
                         "u64": 4600
+
                       }
                     },
                     {
@@ -988,10 +1028,25 @@
                     },
                     {
                       "key": {
+
+                        "symbol": "dispute_deadline"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "disputed"
+                      },
+                      "val": {
+                        "bool": false
+
                         "symbol": "deadline"
                       },
                       "val": {
                         "u64": 4600
+
                       }
                     },
                     {
@@ -1125,10 +1180,25 @@
                     },
                     {
                       "key": {
+
+                        "symbol": "dispute_deadline"
+                      },
+                      "val": {
+                        "u64": 1000
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "disputed"
+                      },
+                      "val": {
+                        "bool": false
+
                         "symbol": "deadline"
                       },
                       "val": {
                         "u64": 4600
+
                       }
                     },
                     {
@@ -1245,6 +1315,7 @@
                         },
                         "val": {
                           "u64": 4
+
                         }
                       },
                       {
@@ -1281,6 +1352,7 @@
                         },
                         "val": {
                           "u32": 0
+
                         }
                       },
                       {
