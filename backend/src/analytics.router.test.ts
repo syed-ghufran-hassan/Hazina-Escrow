@@ -92,7 +92,7 @@ describe('analyticsRouter', () => {
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-17T00:00:00.000Z'));
-    const store: Store = { datasets, transactions, webhooks: [] };
+    const store: Store = { datasets, transactions, webhooks: [], payoutFailures: [] };
     await writeStore(store);
   });
 

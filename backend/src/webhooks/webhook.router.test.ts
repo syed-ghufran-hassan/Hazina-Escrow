@@ -150,6 +150,7 @@ describe('Webhook Router', () => {
     process.env.PAYMENT_WEBHOOK_SECRET = 'test-secret';
     process.env.API_KEY = TEST_API_KEY;
     process.env.SELLER_JWT_SECRET = TEST_JWT_SECRET;
+    process.env.WEBHOOK_SECRET_KEY = crypto.randomBytes(32).toString('hex');
   });
 
   afterEach(() => {

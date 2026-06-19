@@ -18,7 +18,7 @@ vi.mock('../common/storage', () => ({
 }));
 
 const { mockIsValidStellarAddress } = vi.hoisted(() => ({
-  mockIsValidStellarAddress: vi.fn<[string], boolean>(),
+  mockIsValidStellarAddress: vi.fn<(address: string) => boolean>(),
 }));
 
 vi.mock('@stellar/stellar-sdk', () => ({

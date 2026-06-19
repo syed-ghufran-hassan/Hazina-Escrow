@@ -190,12 +190,10 @@ describe('SellPage', () => {
   describe('Draft auto-save and restoration', () => {
     beforeEach(() => {
       localStorage.clear();
-      vi.useFakeTimers();
     });
 
     afterEach(() => {
       localStorage.clear();
-      vi.useRealTimers();
     });
 
     it('persists form data to localStorage when fields change', async () => {

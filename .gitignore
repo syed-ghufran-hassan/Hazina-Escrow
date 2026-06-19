@@ -20,6 +20,7 @@ contracts/hazina-escrow/test_snapshots/fuzz_tests/
 
 /target
 target_local/
+.cargo-home/
 fix.md
 issue.md
 pr.md
