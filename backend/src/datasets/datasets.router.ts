@@ -84,6 +84,10 @@ const createDatasetSchema = z.object({
     .string()
     .trim()
     .refine(StrKey.isValidEd25519PublicKey, { message: 'Invalid Stellar address' }),
+  notificationEmail: z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().email().max(320).optional(),
+  ),
   data: dataField,
 });
 
@@ -106,6 +110,9 @@ const createDatasetSchema = z.object({
  *           type: number
  *         sellerWallet:
  *           type: string
+ *         notificationEmail:
+ *           type: string
+ *           format: email
  *         queriesServed:
  *           type: integer
  *         totalEarned:
@@ -118,7 +125,7 @@ const createDatasetSchema = z.object({
 export const datasetsRouter = Router();
 
 function withoutRawData(dataset: Dataset) {
-  const { data: _data, ...meta } = dataset;
+  const { data: _data, notificationEmail: _notificationEmail, ...meta } = dataset;
   return meta;
 }
 
@@ -596,6 +603,9 @@ datasetsRouter.get('/:id/ratings', async (req: Request, res: Response) => {
  *                 type: number
  *               sellerWallet:
  *                 type: string
+ *               notificationEmail:
+ *                 type: string
+ *                 format: email
  *               data:
  *                 type: object
  *     responses:
@@ -609,9 +619,8 @@ datasetsRouter.post(
   requireSellerMutationAuth,
   validateBody(createDatasetSchema),
   async (req: Request, res: Response) => {
-    const { name, description, type, pricePerQuery, sellerWallet, data } = req.body as z.infer<
-      typeof createDatasetSchema
-    >;
+    const { name, description, type, pricePerQuery, sellerWallet, notificationEmail, data } =
+      req.body as z.infer<typeof createDatasetSchema>;
 
     const dataset: Dataset = {
       id: `ds-${uuidv4()}`,
@@ -620,6 +629,7 @@ datasetsRouter.post(
       type,
       pricePerQuery,
       sellerWallet,
+      notificationEmail,
       data,
       queriesServed: 0,
       totalEarned: 0,
@@ -642,7 +652,7 @@ datasetsRouter.post(
       pricePerQuery: dataset.pricePerQuery,
     }).catch(() => {});
 
-    const { data: _d, ...meta } = dataset;
+    const { data: _d, notificationEmail: _notificationEmail, ...meta } = dataset;
     return res.status(201).json({ success: true, dataset: meta });
   },
 );

@@ -14,9 +14,13 @@ import {
   updateDataset,
 } from '../common/storage';
 import { Sentry } from '../common/sentry';
-import { v4 as uuidv4 } from 'uuid';
-import { logger } from '../lib/logger';
-import { domainMetrics } from '../common/datadog';
+import { sendSellerNotificationEmail } from '../notifications/email.service';
+import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
+import { generateDataSummary } from '../ai/claude.service';
+import { notifySeller } from '../webhooks/webhook.service';
+import { transactionEventEmitter } from '../websocket/transaction-events';
+import { verifyStellarPayment, PaymentError } from './stellar.service';
+
 export interface DeliveryResult {
   success: boolean;
   pendingDelivery?: boolean;
@@ -104,6 +108,25 @@ export async function deliverVerifiedPayment(params: {
         extra: { txHash, datasetId: dataset.id, sellerWallet: dataset.sellerWallet },
       });
     });
+
+  if (dataset.notificationEmail) {
+    void sendSellerNotificationEmail({
+      to: dataset.notificationEmail,
+      datasetName: dataset.name,
+      amount: dataset.pricePerQuery,
+      sellerAmount,
+      txHash,
+      timestamp: new Date().toISOString(),
+    }).catch((emailError: unknown) => {
+      console.error(
+        `[Escrow] Seller email notification failed for txHash=${txHash} dataset=${dataset.id}`,
+      );
+      Sentry.captureException(emailError, {
+        tags: { component: 'seller-email-notification' },
+        extra: { txHash, datasetId: dataset.id },
+      });
+    });
+  }
 
   domainMetrics.datasetQueried({
     datasetType: dataset.type,
