@@ -769,44 +769,49 @@ impl HazinaEscrow {
     /// Seller claims funds after the escrow deadline has passed without release.
     /// The platform fee is withheld in the contract (admin recovers via emergency_withdraw).
     pub fn claim_expired(env: Env, escrow_id: u64, seller: Address) {
-        seller.require_auth();
-        let mut record = Self::read_escrow(&env, escrow_id);
-        if record.seller != seller {
-            panic_with_error!(&env, HazinaEscrowError::NotSeller);
-        }
-        if record.released {
-            panic_with_error!(&env, HazinaEscrowError::AlreadyReleased);
-        }
-        if record.refunded {
-            panic_with_error!(&env, HazinaEscrowError::AlreadyRefunded);
-        }
-        if env.ledger().timestamp() <= record.deadline {
-            panic_with_error!(&env, HazinaEscrowError::NotExpired);
-        }
-
-        let calculated_cut =
-            record.amount * record.platform_fee_bps as i128 / MAX_BASIS_POINTS as i128;
-        let platform_cut =
-            if calculated_cut == 0 && record.amount > 0 && record.platform_fee_bps > 0 {
-                1
-            } else {
-                calculated_cut
-            };
-        let seller_cut = record.amount - platform_cut;
-
-        let token_client = token::Client::new(&env, &record.token);
-        token_client.transfer(&env.current_contract_address(), &record.seller, &seller_cut);
-
-        record.released = true;
-        env.storage()
-            .persistent()
-            .set(&EscrowKey::Record(escrow_id), &record);
-
-        env.events().publish(
-            (symbol_short!("claimed"),),
-            (escrow_id, seller, seller_cut),
-        );
+    seller.require_auth();
+    let mut record = Self::read_escrow(&env, escrow_id);
+    if record.seller != seller {
+        panic_with_error!(&env, HazinaEscrowError::NotSeller);
     }
+    if record.released {
+        panic_with_error!(&env, HazinaEscrowError::AlreadyReleased);
+    }
+    if record.refunded {
+        panic_with_error!(&env, HazinaEscrowError::AlreadyRefunded);
+    }
+    // --- ADD THE DISPUTE CHECK HERE ---
+    if record.disputed {
+        panic_with_error!(&env, HazinaEscrowError::DisputedEscrow);
+    }
+    // ---------------------------------
+    if env.ledger().timestamp() <= record.deadline {
+        panic_with_error!(&env, HazinaEscrowError::NotExpired);
+    }
+
+    let calculated_cut =
+        record.amount * record.platform_fee_bps as i128 / MAX_BASIS_POINTS as i128;
+    let platform_cut =
+        if calculated_cut == 0 && record.amount > 0 && record.platform_fee_bps > 0 {
+            1
+        } else {
+            calculated_cut
+        };
+    let seller_cut = record.amount - platform_cut;
+
+    let token_client = token::Client::new(&env, &record.token);
+    token_client.transfer(&env.current_contract_address(), &record.seller, &seller_cut);
+
+    record.released = true;
+    env.storage()
+        .persistent()
+        .set(&EscrowKey::Record(escrow_id), &record);
+
+    env.events().publish(
+        (symbol_short!("claimed"),),
+        (escrow_id, seller, seller_cut),
+    );
+}
 
     /// Withdraw tokens from the contract in an emergency. Contract must be paused first.
     pub fn emergency_withdraw(
