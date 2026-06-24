@@ -169,7 +169,12 @@ const swaggerOptions = {
 };
 
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+// Only expose API docs in non-production environments — avoids leaking internal
+// schema details and keeps the route out of the global rate limiter's scope.
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+}
+
 // Health check with service monitoring
 const HEALTH_TIMEOUT_MS = 3000;
 
