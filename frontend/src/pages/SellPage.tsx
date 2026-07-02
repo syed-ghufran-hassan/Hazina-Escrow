@@ -94,6 +94,7 @@ function saveDraft(form: FormState): void {
         description: form.description,
         type: form.type,
         pricePerQuery: form.pricePerQuery,
+        paymentToken: form.paymentToken,
         dataText: form.dataText,
       },
       timestamp: Date.now(),
@@ -417,7 +418,7 @@ export default function SellPage() {
                     </label>
                     <select
                       value={form.paymentToken}
-                      onChange={set('paymentToken') as any}
+                      onChange={set('paymentToken')}
                       className="w-full bg-void/60 border border-border/60 rounded-xl px-4 py-3 text-sm font-body text-foreground focus:outline-none focus:border-gold/50 transition-colors"
                     >
                       <option value="USDC">USDC</option>

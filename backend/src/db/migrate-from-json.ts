@@ -19,8 +19,7 @@ import {
   type Store,
 } from '../common/storage';
 
-const DATA_PATH =
-  process.env.DATA_PATH || path.resolve(process.cwd(), 'data/datasets.json');
+const DATA_PATH = process.env.DATA_PATH || path.resolve(process.cwd(), 'data/datasets.json');
 
 async function migrate(): Promise<void> {
   if (!existsSync(DATA_PATH)) {

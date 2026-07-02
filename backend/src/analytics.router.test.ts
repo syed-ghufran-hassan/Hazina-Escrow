@@ -109,7 +109,7 @@ describe('analyticsRouter', () => {
       { id: 'seller-ds-1', name: 'Seller Dataset One', earned: 3.8, queries: 2 },
       { id: 'seller-ds-2', name: 'Seller Dataset Two', earned: 2.85, queries: 1 },
     ]);
-    expect(res.body.topBuyers[0]).toEqual({ wallet: transactions[0].buyerWallet, count: 2 });
+    expect(res.body.topBuyers[0]).toEqual({ wallet: transactions[0]?.buyerWallet, count: 2 });
     expect(JSON.stringify(res.body)).not.toContain('other-ds');
     expect(JSON.stringify(res.body)).not.toContain('GOTHERBUYER');
   });

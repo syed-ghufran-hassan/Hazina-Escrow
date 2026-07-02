@@ -30,6 +30,7 @@ export interface Dataset {
   type: string;
   pricePerQuery: number;
   sellerWallet: string;
+  paymentToken?: string;
   notificationEmail?: string;
   data: Record<string, unknown>;
   queriesServed: number;
@@ -45,6 +46,7 @@ export interface Transaction {
   buyerWallet?: string;
   memo?: string;
   amount: number;
+  paymentToken?: string;
   status?:
     | 'pending'
     | 'verifying'
@@ -116,6 +118,7 @@ function rowToDataset(row: any): Dataset {
     type: row.type,
     pricePerQuery: Number(row.pricePerQuery),
     sellerWallet: row.sellerWallet,
+    paymentToken: row.paymentToken ?? undefined,
     notificationEmail: row.notificationEmail ?? undefined,
     data: row.data ? JSON.parse(row.data) : {},
     queriesServed: Number(row.queriesServed ?? 0),
@@ -133,15 +136,15 @@ function datasetToRow(dataset: Dataset): Record<string, unknown> {
     description: dataset.description,
     type: dataset.type,
     pricePerQuery: String(dataset.pricePerQuery),
-    paymentToken: 'USDC',
+    paymentToken: dataset.paymentToken ?? 'USDC',
     sellerWallet: dataset.sellerWallet,
     notificationEmail: dataset.notificationEmail ?? null,
     data: JSON.stringify(dataset.data),
     queriesServed: dataset.queriesServed,
     totalEarned: String(dataset.totalEarned),
     createdAt: dataset.createdAt,
-    ratings: dataset.ratings != null ? JSON.stringify(dataset.ratings) : null,
-    priceHistory: dataset.priceHistory != null ? JSON.stringify(dataset.priceHistory) : null,
+    ratings: dataset.ratings !== undefined ? JSON.stringify(dataset.ratings) : null,
+    priceHistory: dataset.priceHistory !== undefined ? JSON.stringify(dataset.priceHistory) : null,
   };
 }
 
@@ -154,13 +157,12 @@ function rowToTransaction(row: any): Transaction {
     buyerWallet: row.buyerWallet ?? undefined,
     memo: row.memo ?? undefined,
     amount: Number(row.amount),
+    paymentToken: row.paymentToken ?? undefined,
     status: row.status ?? undefined,
     deliveryStatus: row.deliveryStatus ?? undefined,
     sellerPaid:
-      row.sellerPaid === null || row.sellerPaid === undefined
-        ? undefined
-        : Boolean(row.sellerPaid),
-    sellerAmount: row.sellerAmount != null ? Number(row.sellerAmount) : undefined,
+      row.sellerPaid === null || row.sellerPaid === undefined ? undefined : Boolean(row.sellerPaid),
+    sellerAmount: row.sellerAmount !== null ? Number(row.sellerAmount) : undefined,
     sellerTxHash: row.sellerTxHash ?? undefined,
     sellerNotifiedAt: row.sellerNotifiedAt ?? undefined,
     sellerNotificationError: row.sellerNotificationError ?? undefined,
@@ -183,11 +185,11 @@ function transactionToRow(tx: Transaction): Record<string, unknown> {
     buyerWallet: tx.buyerWallet ?? null,
     memo: tx.memo ?? null,
     amount: String(tx.amount),
-    paymentToken: 'USDC',
+    paymentToken: tx.paymentToken ?? 'USDC',
     status: tx.status ?? null,
     deliveryStatus: tx.deliveryStatus ?? null,
     sellerPaid: tx.sellerPaid === undefined ? null : tx.sellerPaid ? 1 : 0,
-    sellerAmount: tx.sellerAmount != null ? String(tx.sellerAmount) : null,
+    sellerAmount: tx.sellerAmount !== undefined ? String(tx.sellerAmount) : null,
     sellerTxHash: tx.sellerTxHash ?? null,
     sellerNotifiedAt: tx.sellerNotifiedAt ?? null,
     sellerNotificationError: tx.sellerNotificationError ?? null,
@@ -307,11 +309,7 @@ export async function writeStore(store: Store): Promise<void> {
 }
 
 export async function getDataset(id: string): Promise<Dataset | undefined> {
-  const result = await db
-    .select()
-    .from(datasetsSqlite)
-    .where(eq(datasetsSqlite.id, id))
-    .limit(1);
+  const result = await db.select().from(datasetsSqlite).where(eq(datasetsSqlite.id, id)).limit(1);
   return result[0] ? rowToDataset(result[0]) : undefined;
 }
 
@@ -324,11 +322,7 @@ export async function updateDataset(
   id: string,
   updates: Partial<Dataset>,
 ): Promise<Dataset | null> {
-  const existing = await db
-    .select()
-    .from(datasetsSqlite)
-    .where(eq(datasetsSqlite.id, id))
-    .limit(1);
+  const existing = await db.select().from(datasetsSqlite).where(eq(datasetsSqlite.id, id)).limit(1);
   if (existing.length === 0) return null;
   const merged = { ...rowToDataset(existing[0]), ...updates };
   await db.update(datasetsSqlite).set(datasetToRow(merged)).where(eq(datasetsSqlite.id, id));
@@ -362,10 +356,7 @@ export async function getAgentJobByTxHash(txHash: string): Promise<Transaction |
     .select()
     .from(transactionsSqlite)
     .where(
-      and(
-        eq(transactionsSqlite.txHash, txHash),
-        eq(transactionsSqlite.datasetId, 'agent-job'),
-      ),
+      and(eq(transactionsSqlite.txHash, txHash), eq(transactionsSqlite.datasetId, 'agent-job')),
     )
     .limit(1);
   return result[0] ? rowToTransaction(result[0]) : undefined;
@@ -432,9 +423,7 @@ export async function getTransactions(
 
 export async function getTransactionsCount(datasetId?: string): Promise<number> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let query: any = db
-    .select({ count: sql<number>`count(*)` })
-    .from(transactionsSqlite);
+  let query: any = db.select({ count: sql<number>`count(*)` }).from(transactionsSqlite);
   if (datasetId) query = query.where(eq(transactionsSqlite.datasetId, datasetId));
   const result = await query;
   return Number(result[0]?.count ?? 0);
@@ -473,11 +462,7 @@ export async function getWebhooksForSeller(sellerWallet: string): Promise<Webhoo
 }
 
 export async function getWebhookById(id: string): Promise<WebhookSubscription | undefined> {
-  const result = await db
-    .select()
-    .from(webhooksSqlite)
-    .where(eq(webhooksSqlite.id, id))
-    .limit(1);
+  const result = await db.select().from(webhooksSqlite).where(eq(webhooksSqlite.id, id)).limit(1);
   return result[0] ? rowToWebhook(result[0]) : undefined;
 }
 
@@ -500,11 +485,7 @@ export async function updateWebhook(
   id: string,
   updates: Partial<WebhookSubscription>,
 ): Promise<WebhookSubscription | null> {
-  const existing = await db
-    .select()
-    .from(webhooksSqlite)
-    .where(eq(webhooksSqlite.id, id))
-    .limit(1);
+  const existing = await db.select().from(webhooksSqlite).where(eq(webhooksSqlite.id, id)).limit(1);
   if (existing.length === 0) return null;
   const merged = { ...rowToWebhook(existing[0]), ...updates };
   await db.update(webhooksSqlite).set(webhookToRow(merged)).where(eq(webhooksSqlite.id, id));

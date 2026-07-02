@@ -1,7 +1,7 @@
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { getCircuitBreaker } from '../common/circuit-breaker';
 import { domainMetrics } from '../common/datadog';
-import { HORIZON_URL, USDC_ISSUER, EURC_ISSUER, getTokenByCode } from '../lib/stellar.config';
+import { HORIZON_URL, getTokenByCode } from '../lib/stellar.config';
 import { logger } from '../lib/logger';
 import { parsePositiveInt } from '../common/env';
 
@@ -55,7 +55,7 @@ export class StellarTimeoutError extends Error {
   constructor(timeoutMs: number) {
     super(
       `Stellar Horizon did not respond within ${timeoutMs / 1000} seconds. ` +
-      'The payment network may be congested — please try again shortly.',
+        'The payment network may be congested — please try again shortly.',
     );
     this.name = 'StellarTimeoutError';
   }

@@ -58,7 +58,7 @@ export default function DatasetDetailPage() {
 
   const previewJson = useMemo(() => JSON.stringify(dataset?.preview ?? {}, null, 2), [dataset]);
   const typeMeta = dataset ? getTypeMeta(dataset.type) : null;
-  const ratings = dataset?.ratings ?? { score: 0, count: 0 };
+  const ratings = dataset?.ratings ?? { score: 0, count: 0, reviews: [] };
   const priceHistory = dataset?.priceHistory?.length
     ? dataset.priceHistory
     : dataset
@@ -69,7 +69,7 @@ export default function DatasetDetailPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen pt-28 pb-20 max-w-7xl mx-auto px-4">
-        <Skeleton variant="card" height={520} />
+        <Skeleton variant="rounded" height={520} />
       </div>
     );
   }

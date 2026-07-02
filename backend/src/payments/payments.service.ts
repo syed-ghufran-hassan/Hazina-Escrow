@@ -1,8 +1,11 @@
+import { v4 as uuidv4 } from 'uuid';
 import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
 import { generateDataSummary } from '../ai/claude.service';
 import { notifySeller } from '../webhooks/webhook.service';
 import { transactionEventEmitter } from '../websocket/transaction-events';
+import { domainMetrics } from '../common/datadog';
 import { verifyStellarPayment, PaymentError } from './stellar.service';
+import { logger } from '../lib/logger';
 import {
   getDataset,
   getTransactionByHash,
@@ -15,11 +18,6 @@ import {
 } from '../common/storage';
 import { Sentry } from '../common/sentry';
 import { sendSellerNotificationEmail } from '../notifications/email.service';
-import { sellerShare, platformFee as computePlatformFee } from '../common/constants';
-import { generateDataSummary } from '../ai/claude.service';
-import { notifySeller } from '../webhooks/webhook.service';
-import { transactionEventEmitter } from '../websocket/transaction-events';
-import { verifyStellarPayment, PaymentError } from './stellar.service';
 
 export interface DeliveryResult {
   success: boolean;
@@ -385,7 +383,7 @@ export async function retryFailedSellerNotifications(): Promise<void> {
         // Exhausted retries — surface a durable alert so an operator can investigate
         console.error(
           `[Escrow] Seller notification permanently failed after ${MAX_SELLER_NOTIFICATION_ATTEMPTS} attempts ` +
-          `txHash=${tx.txHash} dataset=${tx.datasetId} seller=${tx.datasetId}`,
+            `txHash=${tx.txHash} dataset=${tx.datasetId} seller=${tx.datasetId}`,
         );
         Sentry.captureMessage(`Seller notification permanently failed: txHash=${tx.txHash}`, {
           level: 'error',
@@ -427,7 +425,7 @@ export async function retryFailedSellerNotifications(): Promise<void> {
         });
         console.error(
           `[Escrow] Seller notification retry ${attempts}/${MAX_SELLER_NOTIFICATION_ATTEMPTS} failed ` +
-          `txHash=${tx.txHash}: ${errMsg}`,
+            `txHash=${tx.txHash}: ${errMsg}`,
         );
       }
     }),

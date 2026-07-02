@@ -44,7 +44,6 @@ import { sendUsdcPayment } from '../agent/agent.wallet';
 import { agentRouter } from '../agent/agent.router';
 import { paymentsRouter } from './payments.router';
 
-
 const SELLER_WALLET = `G${'A'.repeat(55)}`;
 const ESCROW_WALLET = `G${'B'.repeat(55)}`;
 

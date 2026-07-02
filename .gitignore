@@ -8,6 +8,10 @@ frontend/dist/
 backend/dist/
 backend/backups/
 backups/
+test-backups/
+backend/sqlite.db
+backend/sqlite.db-shm
+backend/sqlite.db-wal
 backend/coverage/
 frontend/coverage/
 frontend/playwright-report/

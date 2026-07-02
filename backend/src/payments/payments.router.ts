@@ -161,11 +161,14 @@ const verifyDemoSchema = z.object({
 
 // POST /api/query/:id — initiate query, returns 402 Payment Required
 paymentsRouter.post('/query/:id', async (req: Request, res: Response) => {
-  const dataset = await getDataset(req.params.id);
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: 'Missing dataset id' });
+
+  const dataset = await getDataset(id);
   if (!dataset) return res.status(404).json({ error: 'Dataset not found' });
 
   const timestamp = Date.now();
-  const memo = `haz-${req.params.id.slice(0, 8)}-${timestamp}`;
+  const memo = `haz-${id.slice(0, 8)}-${timestamp}`;
 
   const transactionId = `tx-${uuidv4()}`;
   const tokenCode = dataset.paymentToken || 'USDC';
@@ -269,7 +272,10 @@ paymentsRouter.post(
   validateBody(verifySchema),
   async (req: Request, res: Response) => {
     const { txHash, buyerQuestion } = req.body as z.infer<typeof verifySchema>;
-    const dataset = await getDataset(req.params.id);
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'Missing dataset id' });
+
+    const dataset = await getDataset(id);
 
     if (!dataset) return res.status(404).json({ error: 'Dataset not found' });
 
@@ -397,7 +403,10 @@ paymentsRouter.post(
   validateBody(verifyDemoSchema),
   async (req: Request, res: Response) => {
     const { buyerQuestion } = req.body as z.infer<typeof verifyDemoSchema>;
-    const dataset = await getDataset(req.params.id);
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'Missing dataset id' });
+
+    const dataset = await getDataset(id);
 
     if (!dataset) return res.status(404).json({ error: 'Dataset not found' });
 

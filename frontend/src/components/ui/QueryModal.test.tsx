@@ -15,7 +15,9 @@ vi.mock('../../lib/api', () => ({
 }));
 
 vi.mock('../../lib/stellarWallets', async () => {
-  const actual = await vi.importActual<typeof import('../../lib/stellarWallets')>('../../lib/stellarWallets');
+  const actual = await vi.importActual<typeof import('../../lib/stellarWallets')>(
+    '../../lib/stellarWallets',
+  );
   return {
     ...actual,
     detectWallets: vi.fn(() => Promise.resolve({ freighter: false, albedo: false })),

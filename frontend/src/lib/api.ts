@@ -178,17 +178,20 @@ export const DatasetDetailSchema = DatasetMetaSchema.extend({
   }),
   preview: z.unknown(),
 
-  ratings: z.object({
-    score: z.number(),
-    count: z.number(),
-    reviews: z.array(z.object({
-      txHash: z.string(),
+  ratings: z
+    .object({
       score: z.number(),
-      comment: z.string().optional(),
-      timestamp: z.string()
-    }))
-  }).optional(),
-
+      count: z.number(),
+      reviews: z.array(
+        z.object({
+          txHash: z.string(),
+          score: z.number(),
+          comment: z.string().optional(),
+          timestamp: z.string(),
+        }),
+      ),
+    })
+    .optional(),
 });
 export type DatasetDetail = z.infer<typeof DatasetDetailSchema>;
 export type DatasetMeta = z.infer<typeof DatasetMetaSchema>;
@@ -371,10 +374,17 @@ export const api = {
     ),
 
   submitDatasetRating: (id: string, score: number) =>
-    request<{ success: boolean; ratings: { score: number; count: number } }>(
-      `${getApiBaseUrl()}/datasets/${id}/ratings`,
-      { method: 'POST', body: JSON.stringify({ score }) },
-    ).then(r => r.ratings),
+    request<{
+      success: boolean;
+      ratings: {
+        score: number;
+        count: number;
+        reviews: Array<{ txHash: string; score: number; comment?: string; timestamp: string }>;
+      };
+    }>(`${getApiBaseUrl()}/datasets/${id}/ratings`, {
+      method: 'POST',
+      body: JSON.stringify({ score }),
+    }).then(r => r.ratings),
 
   getSellerAnalytics: (wallet: string) =>
     request<{ success: boolean } & SellerAnalytics>(
@@ -420,9 +430,14 @@ export const api = {
     }),
 
   getRatings: (id: string, page = 1, limit = 10) =>
-    request<{ success: boolean; score: number; count: number; reviews: Array<{ txHash: string; score: number; comment?: string; timestamp: string }>; page: number; totalPages: number }>(
-      `${getApiBaseUrl()}/datasets/${id}/ratings?page=${page}&limit=${limit}`,
-    ),
+    request<{
+      success: boolean;
+      score: number;
+      count: number;
+      reviews: Array<{ txHash: string; score: number; comment?: string; timestamp: string }>;
+      page: number;
+      totalPages: number;
+    }>(`${getApiBaseUrl()}/datasets/${id}/ratings?page=${page}&limit=${limit}`),
 
   agentInfo: () => request<AgentInfo>(`${getApiBaseUrl()}/agent/info`),
 
@@ -445,6 +460,7 @@ export const api = {
     description: string;
     type: string;
     pricePerQuery: number;
+    paymentToken?: 'USDC' | 'EURC' | 'XLM';
     sellerWallet: string;
     notificationEmail?: string;
     data: unknown;

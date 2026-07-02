@@ -190,6 +190,7 @@ describe('POST /api/v1/payments/verify/:id', () => {
       txHash: 'tx-happy',
       expectedAmount: 1,
       destinationAddress: SELLER_WALLET,
+      tokenCode: 'USDC',
     });
     expect(domainMetrics.paymentVerified).toHaveBeenCalledWith({
       datasetType: 'yield-data',

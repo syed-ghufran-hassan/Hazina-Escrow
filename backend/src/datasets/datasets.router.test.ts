@@ -451,10 +451,13 @@ describe('POST /api/v1/datasets/:id/ratings', () => {
     app = makeApp();
     vi.mocked(getDataset).mockResolvedValue({ ...baseDataset });
     vi.mocked(getTransactionByHash).mockResolvedValue(deliveredTx);
-    vi.mocked(updateDataset).mockImplementation(async (_id, updates) => ({
-      ...baseDataset,
-      ...updates,
-    }) as Dataset);
+    vi.mocked(updateDataset).mockImplementation(
+      async (_id, updates) =>
+        ({
+          ...baseDataset,
+          ...updates,
+        }) as Dataset,
+    );
   });
 
   afterEach(() => {
@@ -534,7 +537,10 @@ describe('POST /api/v1/datasets/:id/ratings', () => {
   });
 
   it('returns 403 when delivery is not yet complete', async () => {
-    vi.mocked(getTransactionByHash).mockResolvedValue({ ...deliveredTx, deliveryStatus: 'pending' });
+    vi.mocked(getTransactionByHash).mockResolvedValue({
+      ...deliveredTx,
+      deliveryStatus: 'pending',
+    });
 
     const res = await request(app)
       .post(`/api/v1/datasets/${DATASET_ID}/ratings`)
