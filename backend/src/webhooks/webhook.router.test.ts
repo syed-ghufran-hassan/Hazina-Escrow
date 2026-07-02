@@ -56,8 +56,9 @@ vi.mock('../common/storage', () => ({
   }),
   updateWebhook: vi.fn(async (id: string, updates: Partial<MockWebhook>) => {
     const idx = _webhooks.findIndex(w => w.id === id);
-    if (idx === -1) return undefined;
-    _webhooks[idx] = { ..._webhooks[idx], ...updates };
+    const existing = _webhooks[idx];
+    if (idx === -1 || !existing) return undefined;
+    _webhooks[idx] = { ...existing, ...updates };
     return _webhooks[idx];
   }),
   getTransactionByMemo: vi.fn(async (memo: string) => {
@@ -68,7 +69,12 @@ vi.mock('../common/storage', () => ({
     return tx;
   }),
   writeStore: vi.fn(async () => {}),
-  readStore: vi.fn(async () => ({ datasets: [], transactions: [], webhooks: [], payoutFailures: [] })),
+  readStore: vi.fn(async () => ({
+    datasets: [],
+    transactions: [],
+    webhooks: [],
+    payoutFailures: [],
+  })),
   invalidateCache: vi.fn(),
 }));
 
@@ -150,6 +156,7 @@ describe('Webhook Router', () => {
     process.env.PAYMENT_WEBHOOK_SECRET = 'test-secret';
     process.env.API_KEY = TEST_API_KEY;
     process.env.SELLER_JWT_SECRET = TEST_JWT_SECRET;
+    process.env.WEBHOOK_SECRET_KEY = crypto.randomBytes(32).toString('hex');
   });
 
   afterEach(() => {
@@ -175,7 +182,7 @@ describe('Webhook Router', () => {
       });
 
       const bodyString = JSON.stringify(validPayload);
-      const signature = (signPayload as ReturnType<typeof vi.fn>)(bodyString, 'test-secret');
+      const signature = vi.mocked(signPayload)(bodyString, 'test-secret');
 
       const res = await request(app)
         .post('/api/v1/webhooks/payment')
@@ -205,7 +212,7 @@ describe('Webhook Router', () => {
 
     it('returns 404 if transaction not found by memo', async () => {
       const payload = { txHash: '0x456', memo: 'unknown-memo' };
-      const signature = (signPayload as ReturnType<typeof vi.fn>)(JSON.stringify(payload), 'test-secret');
+      const signature = vi.mocked(signPayload)(JSON.stringify(payload), 'test-secret');
 
       const res = await request(app)
         .post('/api/v1/webhooks/payment')
@@ -295,7 +302,12 @@ describe('Webhook Router', () => {
       await request(app)
         .post('/api/v1/webhooks')
         .set(apiKeyHeader())
-        .send({ sellerWallet: SELLER_A, url: 'https://a.com/hook', secret: 'secret-a', events: ['ping'] });
+        .send({
+          sellerWallet: SELLER_A,
+          url: 'https://a.com/hook',
+          secret: 'secret-a',
+          events: ['ping'],
+        });
 
       const res = await request(app).get(`/api/v1/webhooks/${SELLER_A}`).set(apiKeyHeader());
       expect(res.status).toBe(200);
@@ -318,7 +330,12 @@ describe('Webhook Router', () => {
       await request(app)
         .post('/api/v1/webhooks')
         .set(apiKeyHeader())
-        .send({ sellerWallet: SELLER_A, url: 'https://a.com/hook', secret: 'shh', events: ['ping'] });
+        .send({
+          sellerWallet: SELLER_A,
+          url: 'https://a.com/hook',
+          secret: 'shh',
+          events: ['ping'],
+        });
 
       const res = await request(app).get(`/api/v1/webhooks/${SELLER_A}`).set(jwtHeader(SELLER_A));
       expect(res.status).toBe(200);
@@ -391,13 +408,23 @@ describe('Webhook Router', () => {
       const create = await request(app)
         .post('/api/v1/webhooks')
         .set(apiKeyHeader())
-        .send({ sellerWallet: SELLER_A, url: 'https://old.com/hook', secret: 'oldsecret', events: ['ping'] });
+        .send({
+          sellerWallet: SELLER_A,
+          url: 'https://old.com/hook',
+          secret: 'oldsecret',
+          events: ['ping'],
+        });
       const id = create.body.webhook.id;
 
       const patch = await request(app)
         .patch(`/api/v1/webhooks/${id}`)
         .set(apiKeyHeader())
-        .send({ url: 'https://new.com/hook', secret: 'newsecret', events: ['payment.received'], active: false });
+        .send({
+          url: 'https://new.com/hook',
+          secret: 'newsecret',
+          events: ['payment.received'],
+          active: false,
+        });
       expect(patch.status).toBe(200);
       expect(patch.body.webhook.url).toBe('https://new.com/hook');
       expect(patch.body.webhook.events).toEqual(['payment.received']);
@@ -450,7 +477,10 @@ describe('Webhook Router', () => {
     });
 
     it('returns 404 for non-existent webhook', async () => {
-      const res = await request(app).patch('/api/v1/webhooks/wh-xyz').set(apiKeyHeader()).send({ active: false });
+      const res = await request(app)
+        .patch('/api/v1/webhooks/wh-xyz')
+        .set(apiKeyHeader())
+        .send({ active: false });
       expect(res.status).toBe(404);
     });
 
@@ -505,7 +535,10 @@ describe('Webhook Router', () => {
         .send({ sellerWallet: SELLER_A, url: 'https://example.com/webhook', secret: 'shh' });
       const id = create.body.webhook.id;
 
-      await request(app).patch(`/api/v1/webhooks/${id}`).set(apiKeyHeader()).send({ active: false });
+      await request(app)
+        .patch(`/api/v1/webhooks/${id}`)
+        .set(apiKeyHeader())
+        .send({ active: false });
 
       const res = await request(app).post(`/api/v1/webhooks/${id}/test`).set(apiKeyHeader());
       expect(res.status).toBe(400);

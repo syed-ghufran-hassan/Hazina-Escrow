@@ -8,6 +8,10 @@ frontend/dist/
 backend/dist/
 backend/backups/
 backups/
+test-backups/
+backend/sqlite.db
+backend/sqlite.db-shm
+backend/sqlite.db-wal
 backend/coverage/
 frontend/coverage/
 frontend/playwright-report/
@@ -20,6 +24,7 @@ contracts/hazina-escrow/test_snapshots/fuzz_tests/
 
 /target
 target_local/
+.cargo-home/
 fix.md
 issue.md
 pr.md

@@ -23,10 +23,10 @@ import {
   Loader2,
 } from 'lucide-react';
 
-import { api, DatasetMeta, SellerAnalytics, Transaction } from '../lib/api';
+import { api, DatasetMeta, PaginatedDatasets, SellerAnalytics, Transaction } from '../lib/api';
 
 import { useCountUp } from '../hooks/useCountUp';
-import { formatUSDC, getTypeMeta, truncateAddress } from '../lib/utils';
+import { formatTimeAgo, formatUSDC, getTypeMeta, truncateAddress } from '../lib/utils';
 import { Link } from 'react-router-dom';
 import {
   Skeleton,
@@ -181,7 +181,6 @@ export default function DashboardPage() {
     websocketCallbacks,
   );
 
-
   useEffect(() => {
     let cancelled = false;
 
@@ -227,7 +226,6 @@ export default function DashboardPage() {
     };
   }, [t]);
 
-
   const selectedWallet = walletFilter || datasets[0]?.sellerWallet || '';
   useEffect(() => {
     if (!selectedWallet) return;
@@ -271,7 +269,6 @@ export default function DashboardPage() {
     };
   }, []);
 
-
   const totalEarned = datasets.reduce((s, d) => s + d.totalEarned, 0);
   const totalQueries = datasets.reduce((s, d) => s + d.queriesServed, 0);
   const chartData = buildChartData(transactions, locale);
@@ -284,7 +281,6 @@ export default function DashboardPage() {
       day: point.date.slice(5),
       queries: point.count,
     })) ?? chartData;
-
 
   // Compare last 3 days vs preceding 4 days for trend indicators
   const recentEarned = chartData.slice(-3).reduce((s, d) => s + d.earned, 0);
@@ -770,7 +766,6 @@ export default function DashboardPage() {
                 )}
               </div>
             </div>
-
 
             {analytics && (
               <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">

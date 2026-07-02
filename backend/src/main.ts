@@ -291,7 +291,6 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
   res.redirect(308, targetUrl);
 });
 
-
 // Routes
 app.use('/api/datasets', datasetsRouter);
 app.use('/api', paymentsRouter);
@@ -334,7 +333,6 @@ app.use(
 
 startDeliveryRetryWorker();
 startSellerNotificationRetryWorker();
-
 
 // Create HTTP server and attach Express app
 const server = http.createServer(app);

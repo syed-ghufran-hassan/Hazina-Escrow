@@ -44,7 +44,6 @@ import { sendUsdcPayment } from '../agent/agent.wallet';
 import { agentRouter } from '../agent/agent.router';
 import { paymentsRouter } from './payments.router';
 
-
 const SELLER_WALLET = `G${'A'.repeat(55)}`;
 const ESCROW_WALLET = `G${'B'.repeat(55)}`;
 
@@ -115,6 +114,8 @@ describeSocket('payments and agent integration routes', () => {
       purchases: [],
       totalSpent: 0.14,
       agentProfit: 0.86,
+      datasetsAvailable: 4,
+      datasetsTotal: 4,
       report: {
         topOpportunity: {
           protocol: 'Aave',

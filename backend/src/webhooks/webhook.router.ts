@@ -304,7 +304,9 @@ webhooksRouter.post(
 // GET /api/webhooks/:sellerWallet — list webhooks for a seller
 // Requires shared API key (admin) OR seller JWT scoped to this wallet.
 webhooksRouter.get('/:sellerWallet', requireSellerReadAuth, async (req: Request, res: Response) => {
-  const webhooks = await getWebhooksForSeller(req.params.sellerWallet);
+  const { sellerWallet } = req.params;
+  if (!sellerWallet) return res.status(400).json({ error: 'Missing sellerWallet' });
+  const webhooks = await getWebhooksForSeller(sellerWallet);
   return res.json({
     success: true,
     webhooks: webhooks.map(({ secret: _secret, ...rest }) => rest),
@@ -331,14 +333,16 @@ webhooksRouter.get('/:sellerWallet', requireSellerReadAuth, async (req: Request,
 // DELETE /api/webhooks/:id — remove a webhook
 // When authenticated via seller JWT, only the owning seller may delete their webhook.
 webhooksRouter.delete('/:id', requireSellerMutationAuth, async (req: Request, res: Response) => {
-  const webhook = await getWebhookById(req.params.id);
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: 'Missing webhook id' });
+  const webhook = await getWebhookById(id);
   if (!webhook) {
     return res.status(404).json({ error: 'Webhook not found' });
   }
   if (req.sellerAuth && req.sellerAuth.sellerWallet !== webhook.sellerWallet) {
     return res.status(403).json({ error: 'Not authorized to delete this webhook' });
   }
-  await removeWebhook(req.params.id);
+  await removeWebhook(id);
   return res.json({ success: true, message: 'Webhook deleted' });
 });
 
@@ -364,7 +368,9 @@ webhooksRouter.delete('/:id', requireSellerMutationAuth, async (req: Request, re
 // POST /api/webhooks/:id/test — send a test ping event
 // When authenticated via seller JWT, only the owning seller may trigger a test.
 webhooksRouter.post('/:id/test', requireSellerMutationAuth, async (req: Request, res: Response) => {
-  const webhook = await getWebhookById(req.params.id);
+  const { id } = req.params;
+  if (!id) return res.status(400).json({ error: 'Missing webhook id' });
+  const webhook = await getWebhookById(id);
   if (!webhook) {
     return res.status(404).json({ error: 'Webhook not found' });
   }
@@ -436,7 +442,9 @@ webhooksRouter.patch(
   requireSellerMutationAuth,
   validateBody(updateWebhookSchema),
   async (req: Request, res: Response) => {
-    const webhook = await getWebhookById(req.params.id);
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'Missing webhook id' });
+    const webhook = await getWebhookById(id);
     if (!webhook) {
       return res.status(404).json({ error: 'Webhook not found' });
     }
@@ -448,7 +456,7 @@ webhooksRouter.patch(
     if (updates.secret !== undefined) {
       updates.secret = encryptSecret(updates.secret);
     }
-    const updated = await updateWebhook(req.params.id, updates);
+    const updated = await updateWebhook(id, updates);
     if (!updated) {
       return res.status(500).json({ error: 'Failed to update webhook' });
     }

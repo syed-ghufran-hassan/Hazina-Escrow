@@ -93,6 +93,7 @@ function verifySellerJwt(token: string, secret: string): SellerJwtClaims | null 
   if (parts.length !== 3 || parts.some(part => part.length === 0)) return null;
 
   const [encodedHeader, encodedPayload, signature] = parts;
+  if (!encodedHeader || !encodedPayload || !signature) return null;
   const header = parseJsonPart(encodedHeader);
   const payload = parseJsonPart(encodedPayload);
   if (!header || !payload) return null;
@@ -208,7 +209,9 @@ export function requireSellerReadAuth(req: Request, res: Response, next: NextFun
         .status(503)
         .json({ error: 'Server misconfigured: API_KEY or SELLER_JWT_SECRET must be set' });
     }
-    logger.warn('[auth] API_KEY and SELLER_JWT_SECRET not set — skipping read auth in non-production');
+    logger.warn(
+      '[auth] API_KEY and SELLER_JWT_SECRET not set — skipping read auth in non-production',
+    );
     return next();
   }
 
