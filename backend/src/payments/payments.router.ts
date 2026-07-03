@@ -161,8 +161,8 @@ const verifyDemoSchema = z.object({
 
 // POST /api/query/:id — initiate query, returns 402 Payment Required
 paymentsRouter.post('/query/:id', async (req: Request, res: Response) => {
-  const { id } = req.params;
-  if (!id) return res.status(400).json({ error: 'Missing dataset id' });
+  // Route requires :id, so Express guarantees this is present when matched.
+  const id = req.params.id as string;
 
   const dataset = await getDataset(id);
   if (!dataset) return res.status(404).json({ error: 'Dataset not found' });
@@ -176,7 +176,10 @@ paymentsRouter.post('/query/:id', async (req: Request, res: Response) => {
   await addTransaction({
     id: transactionId,
     datasetId: dataset.id,
-    txHash: '', // Not yet known
+    // tx_hash is NOT NULL UNIQUE; the real hash isn't known until verification,
+    // so use a placeholder unique to this transaction rather than ''  which
+    // would collide across concurrent pending transactions.
+    txHash: `pending-${transactionId}`,
     memo,
     amount: dataset.pricePerQuery,
     paymentToken: tokenCode,
@@ -272,8 +275,8 @@ paymentsRouter.post(
   validateBody(verifySchema),
   async (req: Request, res: Response) => {
     const { txHash, buyerQuestion } = req.body as z.infer<typeof verifySchema>;
-    const { id } = req.params;
-    if (!id) return res.status(400).json({ error: 'Missing dataset id' });
+    // Route requires :id, so Express guarantees this is present when matched.
+    const id = req.params.id as string;
 
     const dataset = await getDataset(id);
 
@@ -320,10 +323,8 @@ paymentsRouter.post(
         return res.status(202).json(result);
       }
 
-      return res.json({
-        ...result,
-        warning: result.pendingDelivery ? result.warning : null,
-      });
+      // result.pendingDelivery is guaranteed false here (handled above).
+      return res.json({ ...result, warning: null });
     } catch (err) {
       if (err instanceof StellarTimeoutError) {
         return res.status(503).json({ error: err.message });
@@ -403,8 +404,8 @@ paymentsRouter.post(
   validateBody(verifyDemoSchema),
   async (req: Request, res: Response) => {
     const { buyerQuestion } = req.body as z.infer<typeof verifyDemoSchema>;
-    const { id } = req.params;
-    if (!id) return res.status(400).json({ error: 'Missing dataset id' });
+    // Route requires :id, so Express guarantees this is present when matched.
+    const id = req.params.id as string;
 
     const dataset = await getDataset(id);
 

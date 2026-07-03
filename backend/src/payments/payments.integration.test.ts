@@ -39,7 +39,7 @@ vi.mock('../agent/agent.wallet', () => ({
 
 import { runResearchAgentDemo } from '../agent/agent.service';
 import { generateDataSummary } from '../ai/claude.service';
-import { verifyStellarPayment } from './stellar.service';
+import { verifyStellarPayment, StellarTimeoutError } from './stellar.service';
 import { sendUsdcPayment } from '../agent/agent.wallet';
 import { agentRouter } from '../agent/agent.router';
 import { paymentsRouter } from './payments.router';
@@ -81,6 +81,7 @@ describeSocket('payments and agent integration routes', () => {
   let app: Express;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     // Seed store with a pending transaction that has memo 'haz' so processPayment can find it
     await writeStore({
       ...BASE_STORE,
@@ -154,6 +155,42 @@ describeSocket('payments and agent integration routes', () => {
     expect(r.body.payment.amount).toBe(1);
   });
 
+  it('POST /api/v1/payments/query/:id uses the dataset configured payment token', async () => {
+    await writeStore({
+      ...BASE_STORE,
+      datasets: [
+        ...BASE_STORE.datasets,
+        {
+          id: 'ds-eurc',
+          name: 'EURC Dataset',
+          description: 'Priced in EURC',
+          type: 'yield-data',
+          pricePerQuery: 1,
+          paymentToken: 'EURC',
+          sellerWallet: SELLER_WALLET,
+          data: { rows: [1] },
+          queriesServed: 0,
+          totalEarned: 0,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const r = await request(app).post('/api/v1/payments/query/ds-eurc').send({});
+    expect(r.status).toBe(402);
+    expect(r.body.payment.currency).toBe('EURC');
+  });
+
+  it('POST /api/v1/payments/query/:id falls back to the seller wallet when ESCROW_WALLET is unset', async () => {
+    delete process.env.ESCROW_WALLET;
+
+    const r = await request(app).post('/api/v1/payments/query/ds-payment-1').send({});
+    expect(r.status).toBe(402);
+    expect(r.body.payment.paymentAddress).toBe(SELLER_WALLET);
+
+    process.env.ESCROW_WALLET = ESCROW_WALLET;
+  });
+
   it('POST /api/v1/payments/verify/:id handles happy path', async () => {
     const r = await request(app)
       .post('/api/v1/payments/verify/ds-payment-1')
@@ -168,6 +205,7 @@ describeSocket('payments and agent integration routes', () => {
       txHash: 'tx-happy',
       expectedAmount: 1,
       destinationAddress: ESCROW_WALLET,
+      tokenCode: 'USDC',
     });
   });
 
@@ -181,6 +219,37 @@ describeSocket('payments and agent integration routes', () => {
     // The payment verifies and delivery succeeds (sendUsdcPayment failure is handled internally)
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
+  });
+
+  it('persists failed seller payout when a non-Error value is thrown', async () => {
+    vi.mocked(sendUsdcPayment).mockRejectedValueOnce('temporary network error');
+    const response = await request(app).post('/api/v1/payments/verify/ds-payment-1').send({
+      txHash: 'tx-failed-seller-payout-string',
+      buyerQuestion: 'What changed?',
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+  });
+
+  it('returns 503 when Stellar verification times out', async () => {
+    vi.mocked(verifyStellarPayment).mockRejectedValueOnce(new StellarTimeoutError(10_000));
+
+    const response = await request(app)
+      .post('/api/v1/payments/verify/ds-payment-1')
+      .send({ txHash: 'tx-timeout' });
+
+    expect(response.status).toBe(503);
+  });
+
+  it('returns 500 for unexpected errors that are neither StellarTimeoutError nor PaymentError', async () => {
+    vi.mocked(verifyStellarPayment).mockRejectedValueOnce(new Error('unexpected crash'));
+
+    const response = await request(app)
+      .post('/api/v1/payments/verify/ds-payment-1')
+      .send({ txHash: 'tx-unexpected-crash' });
+
+    expect(response.status).toBe(500);
   });
 
   it('POST /api/verify/:id rejects replayed transaction hash', async () => {
@@ -300,18 +369,35 @@ describeSocket('payments and agent integration routes', () => {
           sellerAmount: 0.95,
           timestamp: new Date().toISOString(),
         },
+        {
+          id: 'tx-unpaid-orphaned',
+          datasetId: 'ds-deleted',
+          txHash: 'escrow-100',
+          amount: 1,
+          sellerPaid: false,
+          sellerAmount: 0.95,
+          timestamp: new Date().toISOString(),
+        },
       ],
     });
     const r = await request(app)
       .get('/api/v1/payments/admin/unpaid-sellers')
       .set('Authorization', 'Bearer admin-test-key');
     expect(r.status).toBe(200);
-    expect(r.body.total).toBe(1);
+    expect(r.body.total).toBe(2);
     expect(r.body.unpaidTransactions[0]).toMatchObject({
       txHash: 'escrow-99',
       sellerPaid: false,
       datasetName: 'USDC Yield Dataset',
       sellerWallet: SELLER_WALLET,
+    });
+    // Dataset was deleted after the transaction was recorded — the endpoint
+    // should fall back to null rather than throwing.
+    expect(r.body.unpaidTransactions[1]).toMatchObject({
+      txHash: 'escrow-100',
+      sellerPaid: false,
+      datasetName: null,
+      sellerWallet: null,
     });
   });
 

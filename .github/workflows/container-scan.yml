@@ -72,7 +72,7 @@ jobs:
       # Produce SARIF for the Security tab. This never fails the build so that
       # the report is always uploaded, even when vulnerabilities are present.
       - name: Scan ${{ matrix.name }} image (SARIF report)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ${{ matrix.image }}
           format: sarif
@@ -91,7 +91,7 @@ jobs:
       # Gate the pipeline: fail on any fixable HIGH/CRITICAL vulnerability and
       # print a human-readable table in the job log.
       - name: Scan ${{ matrix.name }} image (fail on HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.28.0
         with:
           image-ref: ${{ matrix.image }}
           format: table

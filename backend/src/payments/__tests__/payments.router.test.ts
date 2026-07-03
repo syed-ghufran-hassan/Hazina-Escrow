@@ -74,7 +74,11 @@ vi.mock('../../common/storage', async importOriginal => {
 
 // ── Imports (after mocks) ────────────────────────────────────────────────────
 
-import { paymentsRouter } from '../payments.router';
+import {
+  paymentsRouter,
+  startDeliveryRetryWorker,
+  stopDeliveryRetryWorker,
+} from '../payments.router';
 import { generateDataSummary } from '../../ai/claude.service';
 import { getDataset, txHashUsed } from '../../common/storage';
 import type { Dataset } from '../../common/storage';
@@ -204,6 +208,15 @@ describe('POST /api/v1/payments/verify/:id', () => {
     });
   });
 
+  it('sanitizes a whitespace-only buyerQuestion down to undefined', async () => {
+    const res = await request(app)
+      .post('/api/v1/payments/verify/ds-test-1')
+      .send({ txHash: 'tx-whitespace-question', buyerQuestion: '   ' });
+
+    expect(res.status).toBe(200);
+    expect(generateDataSummary).toHaveBeenCalledWith(DATASET.data, undefined);
+  });
+
   it('returns 202 and records delivery failure when AI summary throws', async () => {
     // Reset the txHashUsed mock to ensure it returns false for new txHash
     vi.mocked(txHashUsed).mockResolvedValueOnce(false);
@@ -287,5 +300,55 @@ describe('POST /api/v1/payments/verify/:id/demo', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.ai.summary).toContain('Demo mode');
+  });
+
+  it('returns 200 with fallback summary when AI throws a non-Error value', async () => {
+    vi.mocked(generateDataSummary).mockRejectedValue('Claude unavailable');
+
+    const res = await request(app).post('/api/v1/payments/verify/ds-test-1/demo').send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.ai.summary).toContain('Demo mode');
+  });
+
+  it('passes a real buyerQuestion through to the AI summary call', async () => {
+    const res = await request(app)
+      .post('/api/v1/payments/verify/ds-test-1/demo')
+      .send({ buyerQuestion: 'What changed?' });
+
+    expect(res.status).toBe(200);
+    expect(generateDataSummary).toHaveBeenCalledWith(DATASET.data, 'What changed?');
+  });
+
+  it('sanitizes a whitespace-only buyerQuestion down to undefined', async () => {
+    const res = await request(app)
+      .post('/api/v1/payments/verify/ds-test-1/demo')
+      .send({ buyerQuestion: '   ' });
+
+    expect(res.status).toBe(200);
+    expect(generateDataSummary).toHaveBeenCalledWith(DATASET.data, undefined);
+  });
+});
+
+// ── Tests: delivery retry worker lifecycle ───────────────────────────────────
+
+describe('startDeliveryRetryWorker / stopDeliveryRetryWorker', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    stopDeliveryRetryWorker();
+    vi.useRealTimers();
+  });
+
+  it('is a no-op to start twice, and a no-op to stop twice', async () => {
+    startDeliveryRetryWorker();
+    startDeliveryRetryWorker(); // second call should hit the early-return guard
+
+    await vi.runOnlyPendingTimersAsync();
+
+    stopDeliveryRetryWorker();
+    stopDeliveryRetryWorker(); // second call should hit the early-return guard
   });
 });

@@ -78,10 +78,10 @@ jobs:
         run: npm ci --prefix frontend
 
       - name: Type-check backend
-        run: npx --prefix backend tsc --noEmit
+        run: npm run typecheck --prefix backend
 
       - name: Type-check frontend
-        run: npx --prefix frontend tsc --noEmit
+        run: npm run typecheck --prefix frontend
 
   # ── Security ──────────────────────────────────────────────────────────────────
   security:
