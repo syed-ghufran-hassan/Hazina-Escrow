@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, Calendar, Database, DollarSign, Hash, ShoppingCart, Star } from 'lucide-react';
 import clsx from 'clsx';
@@ -36,7 +36,6 @@ export default function DatasetDetailPage() {
   const { datasetId = '' } = useParams();
   const { locale } = useI18n();
   const [showQueryModal, setShowQueryModal] = useState(false);
-  const queryClient = useQueryClient();
   const {
     data: dataset,
     isLoading,
@@ -45,15 +44,6 @@ export default function DatasetDetailPage() {
     queryKey: ['dataset', datasetId],
     queryFn: () => api.getDataset(datasetId),
     enabled: Boolean(datasetId),
-  });
-
-  const ratingMutation = useMutation({
-    mutationFn: (score: number) => api.submitDatasetRating(datasetId, score),
-    onSuccess: ratings => {
-      queryClient.setQueryData<DatasetDetail>(['dataset', datasetId], current =>
-        current ? { ...current, ratings } : current,
-      );
-    },
   });
 
   const previewJson = useMemo(() => JSON.stringify(dataset?.preview ?? {}, null, 2), [dataset]);
@@ -196,13 +186,6 @@ export default function DatasetDetailPage() {
                 <span className="text-sm text-foreground-muted">
                   {ratings.score.toFixed(1)} ({ratings.count})
                 </span>
-              </div>
-              <div className="border-t border-border/40 pt-4 mb-5">
-                <p className="text-sm text-foreground-muted mb-2">Rate after a successful query</p>
-                <Stars value={0} onSelect={score => ratingMutation.mutate(score)} />
-                {ratingMutation.isSuccess && (
-                  <p className="text-xs text-emerald-400 mt-2">Thanks for rating this dataset.</p>
-                )}
               </div>
               <button
                 type="button"

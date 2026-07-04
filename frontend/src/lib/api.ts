@@ -373,19 +373,6 @@ export const api = {
       parseApiResponse(DatasetDetailSchema, r.dataset),
     ),
 
-  submitDatasetRating: (id: string, score: number) =>
-    request<{
-      success: boolean;
-      ratings: {
-        score: number;
-        count: number;
-        reviews: Array<{ txHash: string; score: number; comment?: string; timestamp: string }>;
-      };
-    }>(`${getApiBaseUrl()}/datasets/${id}/ratings`, {
-      method: 'POST',
-      body: JSON.stringify({ score }),
-    }).then(r => r.ratings),
-
   getSellerAnalytics: (wallet: string) =>
     request<{ success: boolean } & SellerAnalytics>(
       `${getApiBaseUrl()}/analytics/seller/${encodeURIComponent(wallet)}`,

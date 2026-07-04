@@ -4,13 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── Module mocks (hoisted before imports) ────────────────────────────────────
 
-vi.mock('../../lib/contract.client', () => ({
-  getEscrow: vi.fn(),
-  releaseEscrow: vi.fn(),
-  refundEscrow: vi.fn(),
-  usdcToStroops: (usdc: number) => BigInt(Math.round(usdc * 10_000_000)),
-}));
-
 vi.mock('../stellar.service', () => ({
   verifyStellarPayment: vi.fn(),
   StellarTimeoutError: class StellarTimeoutError extends Error {
