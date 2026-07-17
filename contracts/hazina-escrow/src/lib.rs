@@ -1832,6 +1832,122 @@ mod fuzz_tests {
         assert_eq!(env.events().all().len(), 1);
     }
 
+    proptest! {  
+    #[test]  
+    fn prop_amount_circuit_breaker_rejects_excessive_amounts(amount in 0i128..2_000_000_000_000i128) {  
+        let (env, client, admin, buyer, seller, usdc) = setup();  
+          
+        // Set a custom max amount for testing  
+        let test_max = 500_000_000_000i128;  
+        client.set_max_escrow_amount(&admin, &test_max);  
+          
+        if amount > test_max {  
+            // Should panic with AmountExceedsCircuitBreaker  
+            let result = client.try_lock(  
+                &buyer,  
+                &seller,  
+                &usdc,  
+                &amount,  
+                &dataset_id(&env, "ds-amount-cb"),  
+                &3600,  
+            );  
+            assert!(result.is_err());  
+        } else {  
+            // Should succeed  
+            let escrow_id = client.lock(  
+                &buyer,  
+                &seller,  
+                &usdc,  
+                &amount,  
+                &dataset_id(&env, "ds-amount-cb"),  
+                &3600,  
+            );  
+            let record = client.get_escrow(&escrow_id);  
+            assert_eq!(record.amount, amount);  
+        }  
+    }  
+}  
+  
+proptest! {  
+    #[test]  
+    fn prop_rate_circuit_breaker_enforces_per_ledger_limit(n in 0u32..150u32) {  
+        let (env, client, admin, buyer, seller, usdc) = setup();  
+          
+        // Set a custom per-ledger limit for testing  
+        let test_max = 50u32;  
+        client.set_max_escrows_per_ledger(&admin, &test_max);  
+          
+        let mut shares = Vec::new(&env);  
+        let mut dataset_ids = Vec::new(&env);  
+          
+        for i in 0..n {  
+            shares.push_back(SellerShare {  
+                seller: Address::generate(&env),  
+                amount: 1_000_000,  
+            });  
+            dataset_ids.push(dataset_id(&env, &format!("ds-rate-cb-{}", i)));  
+        }  
+          
+        if n > test_max {  
+            // Should panic with RateLimitExceeded  
+            let result = client.try_lock_multi(&buyer, &usdc, &shares, &dataset_ids);  
+            assert!(result.is_err());  
+        } else {  
+            // Should succeed  
+            let first_id = client.lock_multi(&buyer, &usdc, &shares, &dataset_ids);  
+            assert_eq!(first_id, 0);  
+            assert_eq!(client.get_escrow_count(), n as u64);  
+        }  
+    }  
+}  
+  
+#[test]  
+fn test_rate_circuit_breaker_resets_on_ledger_advance() {  
+    let (env, client, admin, buyer, seller, usdc) = setup();  
+      
+    // Set a low per-ledger limit  
+    let test_max = 3u32;  
+    client.set_max_escrows_per_ledger(&admin, &test_max);  
+      
+    // Fill up the current ledger  
+    for i in 0..test_max {  
+        client.lock(  
+            &buyer,  
+            &seller,  
+            &usdc,  
+            &1_000_000,  
+            &dataset_id(&env, &format!("ds-ledger-reset-{}", i)),  
+            &3600,  
+        );  
+    }  
+      
+    // Next lock should fail in current ledger  
+    let result = client.try_lock(  
+        &buyer,  
+        &seller,  
+        &usdc,  
+        &1_000_000,  
+        &dataset_id(&env, "ds-should-fail"),  
+        &3600,  
+    );  
+    assert!(result.is_err());  
+      
+    // Advance the ledger  
+    env.ledger().set(env.ledger().sequence() + 1);  
+      
+    // Now locks should succeed again  
+    let escrow_id = client.lock(  
+        &buyer,  
+        &seller,  
+        &usdc,  
+        &1_000_000,  
+        &dataset_id(&env, "ds-should-succeed"),  
+        &3600,  
+    );  
+    let record = client.get_escrow(&escrow_id);  
+    assert_eq!(record.escrow_id, test_max as u64);  
+}
+
     // ── Emergency withdraw ────────────────────────────────────────────────────
 
     #[test]
