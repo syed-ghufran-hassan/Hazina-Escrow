@@ -1897,7 +1897,7 @@ mod fuzz_tests {
     use super::*;
     use proptest::prelude::*;
     use soroban_sdk::{
-        testutils::Address as _,
+        testutils::{Address as _, Events, Ledger},
         token::{Client as TokenClient, StellarAssetClient},
     };
 
